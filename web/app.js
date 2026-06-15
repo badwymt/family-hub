@@ -93,7 +93,7 @@ async function flushQueue() {
   } finally {
     flushing = false;
     const h = location.hash || "";
-    if (h.startsWith("#/tasks")) renderTasks();
+    if (h.startsWith("#/tasks")) renderChores();
     else if (h.startsWith("#/stars")) renderStars(false);
   }
 }
@@ -981,113 +981,196 @@ function taskOccurrences(task, winStart, winEnd) {
   return keys;
 }
 
-// ---- view: task / chore list (wireframe #5) --------------------------------
+// ---- view: chores — avatar home → member page (chores + rewards bank) ------
 async function viewTasks() {
   await loadContext();
-  if (!state.tasksFilter) state.tasksFilter = "all";
-  await renderTasks();
-  subscribeRealtime(["tasks", "task_completions"], () => renderTasks());
+  if (state.choreMember && !state.membersById[state.choreMember]) state.choreMember = null;
+  await renderChores();
+  subscribeRealtime(["tasks", "task_completions", "family_members", "rewards", "redemptions", "star_ledger"], () => renderChores());
 }
+async function renderChores() { return state.choreMember ? renderChoreMember() : renderChoreHome(); }
 
-async function renderTasks() {
-  const member = state.member;
+const choreWindow = () => {
   const winStart = new Date(); winStart.setHours(0, 0, 0, 0); winStart.setDate(winStart.getDate() - 14);
   const winEnd = new Date(); winEnd.setHours(0, 0, 0, 0); winEnd.setDate(winEnd.getDate() + 28);
+  return { winStart, winEnd };
+};
+const todaysOccs = (t, todayKey, ws, we) => (!t.rrule ? (t.due_date === todayKey ? [null] : []) : taskOccurrences(t, ws, we));
 
-  let tasks = [], doneMap = new Set(), loadErr = "";
+function celebrate() {
+  const es = ["🎉", "⭐", "🎊", "🌟", "✨", "🥳"];
+  for (let i = 0; i < 26; i++) {
+    const s = document.createElement("div");
+    s.className = "confetti"; s.textContent = es[i % es.length];
+    s.style.left = Math.random() * 100 + "vw"; s.style.animationDelay = (Math.random() * 0.5) + "s";
+    document.body.appendChild(s); setTimeout(() => s.remove(), 1900);
+  }
+}
+
+// Chores home = family member avatars (star balance + today's progress)
+async function renderChoreHome() {
+  const todayKey = dateKey(new Date());
+  const ws = new Date(); ws.setHours(0, 0, 0, 0); const we = new Date(ws); we.setDate(we.getDate() + 1);
+  let tasks = [], doneMap = new Set(), board = [], err = "";
   try {
-    const { data, error } = await fetchTasks();
-    if (error) throw error;
-    tasks = data || [];
+    const r = await fetchTasks(); if (r.error) throw r.error; tasks = r.data || [];
     doneMap = await fetchDoneMap(tasks.map((t) => t.id));
-  } catch (e) { loadErr = e.message || String(e); }
-
-  // one row per occurrence (one-off tasks have a single occ = null)
+    const b = await fetchLeaderboard(); if (b.error) throw b.error; board = b.data || [];
+  } catch (e) { err = e.message || String(e); }
   state.pending = state.pending || new Set();
+  const balById = Object.fromEntries(board.map((m) => [m.id, m.star_balance]));
+  const counts = {};
+  for (const t of tasks) {
+    if (!t.assigned_to) continue;
+    for (const occ of todaysOccs(t, todayKey, ws, we)) {
+      const c = counts[t.assigned_to] || (counts[t.assigned_to] = { done: 0, total: 0 });
+      c.total++;
+      if (doneMap.has(`${t.id}|${occ ?? ""}`) || state.pending.has(`${t.id}|${occ ?? ""}`)) c.done++;
+    }
+  }
+  el.innerHTML = `
+    <header class="topbar">
+      <button class="iconbtn" id="switch" title="Switch profile">‹</button>
+      <h1>Chores</h1><span style="width:36px"></span>
+    </header>
+    <section class="content">
+      ${navTabs("tasks")}
+      <p class="sub" style="text-align:left;margin:0 0 14px">Tap a member to see their chores and rewards.</p>
+      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <div class="chorehome">
+        ${state.members.map((m) => {
+          const c = counts[m.id] || { done: 0, total: 0 };
+          const prog = c.total ? `${c.done}/${c.total} done today` : "no chores today";
+          return `<button class="choretile" data-m="${m.id}">
+            ${avatarHTML(m, "avatar")}
+            <span class="ctname">${esc(m.name)}</span>
+            <span class="ctstars">⭐ ${balById[m.id] ?? 0}</span>
+            <span class="ctprog">${prog}</span></button>`;
+        }).join("")}
+      </div>
+      <div class="row"><button class="link" id="signout">Sign out</button></div>
+    </section>`;
+  document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
+  document.getElementById("signout").onclick = signOut;
+  el.querySelectorAll(".choretile").forEach((b) => { b.onclick = () => { state.choreMember = b.dataset.m; renderChores(); }; });
+}
+
+// Member page = their chores + Add chore + Rewards bank (create / redeem / history)
+async function renderChoreMember() {
+  const mid = state.choreMember;
+  const m = state.membersById[mid];
+  const todayKey = dateKey(new Date());
+  const { winStart, winEnd } = choreWindow();
+
+  let tasks = [], doneMap = new Set(), board = [], rewards = [], reds = [], err = "";
+  try {
+    const r = await fetchTasks(); if (r.error) throw r.error; tasks = (r.data || []).filter((t) => t.assigned_to === mid);
+    doneMap = await fetchDoneMap(tasks.map((t) => t.id));
+    const [bd, rw, rd] = await Promise.all([fetchLeaderboard(), fetchRewards(), fetchRedemptions(mid)]);
+    if (bd.error) throw bd.error; if (rw.error) throw rw.error; if (rd.error) throw rd.error;
+    board = bd.data || []; rewards = rw.data || []; reds = rd.data || [];
+  } catch (e) { err = e.message || String(e); }
+  state.pending = state.pending || new Set();
+  const bal = (board.find((x) => x.id === mid) || {}).star_balance || 0;
+  const rewardsById = Object.fromEntries(rewards.map((r) => [r.id, r]));
+
   const rows = [];
   for (const t of tasks) {
     for (const occ of taskOccurrences(t, winStart, winEnd)) {
       const cell = `${t.id}|${occ ?? ""}`;
-      const serverDone = doneMap.has(cell);
-      const pending = state.pending.has(cell);   // optimistic / queued, not yet synced
-      rows.push({ task: t, occ, dueKey: occ ?? t.due_date ?? null, isDone: serverDone || pending, isPending: pending && !serverDone });
+      const isDone = doneMap.has(cell) || state.pending.has(cell);
+      rows.push({ task: t, occ, dueKey: occ ?? t.due_date ?? null, isDone, isPending: state.pending.has(cell) && !doneMap.has(cell) });
     }
   }
-  rows.sort((a, b) => (a.dueKey || "9999-99-99").localeCompare(b.dueKey || "9999-99-99") || a.task.title.localeCompare(b.task.title));
-
-  const filter = state.tasksFilter;
-  const visible = rows.filter((r) => {
-    if (filter === "mine") return r.task.assigned_to === member.id;
-    if (filter === "open") return !r.isDone;
-    if (filter === "done") return r.isDone;
-    return true;
-  });
-  const chip = (key, label) => `<button class="chip${filter === key ? " on" : ""}" data-f="${key}">${label}</button>`;
+  rows.sort((a, b) => (a.isDone - b.isDone) || (a.dueKey || "9999").localeCompare(b.dueKey || "9999") || a.task.title.localeCompare(b.task.title));
 
   el.innerHTML = `
     <header class="topbar">
-      <button class="iconbtn" id="switch" title="Switch profile">‹</button>
-      <h1><span class="dot" style="background:${colorFor(member.color)}"></span>Chores</h1>
-      <button id="addTask">+ Task</button>
+      <button class="iconbtn" id="back" title="Back">‹</button>
+      <h1>${avatarHTML(m, "favatar")} ${esc(m.name)}</h1>
+      <button id="addTask">+ Chore</button>
     </header>
     <section class="content">
       ${navTabs("tasks")}
-      <div class="chips">${chip("all", "All")}${chip("mine", "Mine")}${chip("open", "Open")}${chip("done", "Done")}</div>
-      ${loadErr ? `<p class="err">${esc(loadErr)}</p>` : ""}
+      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <div class="balcard" style="padding:18px;margin-bottom:16px"><div class="balnum" style="font-size:44px">${bal}</div><div class="ballabel">⭐ ${esc(m.name)}'s stars</div></div>
+      <h4 class="lbh">Chores</h4>
       <div class="tasklist" id="tasklist"></div>
+      <h4 class="lbh" style="margin-top:20px">🎁 Rewards bank</h4>
+      <div class="rewardbank" id="rewardbank"></div>
+      <button class="ghost" id="addReward" style="margin-top:12px">+ Create reward</button>
+      ${reds.length ? `<h4 class="lbh" style="margin-top:20px">History</h4><div class="redlist" id="redlist"></div>` : ""}
       <div class="row"><button class="link" id="signout">Sign out</button></div>
     </section>`;
-
-  document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
+  document.getElementById("back").onclick = () => { state.choreMember = null; renderChores(); };
   document.getElementById("signout").onclick = signOut;
   document.getElementById("addTask").onclick = () => openTaskForm(null);
-  el.querySelectorAll(".chip").forEach((c) => { c.onclick = () => { state.tasksFilter = c.dataset.f; renderTasks(); }; });
+  document.getElementById("addReward").onclick = () => openRewardForm(null);
 
   const list = document.getElementById("tasklist");
-  if (!visible.length) {
-    list.innerHTML = `<p class="sub" style="text-align:center;margin-top:24px">No ${filter === "all" ? "" : esc(filter) + " "}tasks yet.</p>`;
-    return;
-  }
-  list.innerHTML = visible.map((r, i) => {
+  if (!rows.length) list.innerHTML = `<p class="sub">No chores yet — add one.</p>`;
+  else list.innerHTML = rows.map((r, i) => {
     const t = r.task;
-    const who = t.assigned_to ? state.membersById[t.assigned_to] : null;
-    const whoName = who ? esc(who.name) : "Anyone";
-    const whoCol = who ? colorFor(who.color) : "#8A8178";
     const star = t.star_reward > 0 ? `<span class="taskstar">⭐${t.star_reward}</span>` : "";
     const due = r.dueKey ? `<span class="taskdue">${esc(fmtDue(r.dueKey))}</span>` : "";
     const rep = t.rrule ? " 🔁" : "";
     const pend = r.isPending ? ` <span class="pendmark" title="Saved locally — will sync when online">⏳</span>` : "";
     return `<div class="task${r.isDone ? " done" : ""}">
-      <button class="check${r.isDone ? " on" : ""}" data-i="${i}" aria-label="toggle complete">${r.isDone ? "✓" : ""}</button>
+      <button class="check${r.isDone ? " on" : ""}" data-i="${i}" aria-label="complete">${r.isDone ? "✓" : ""}</button>
       <button class="taskmain" data-i="${i}">
         <span class="tasktitle">${esc(t.title)}${rep}${pend}</span>
-        <span class="taskmeta"><span class="taskwho" style="color:${whoCol}">${whoName}</span>${star}${due}</span>
-      </button>
-    </div>`;
+        <span class="taskmeta">${star}${due}</span>
+      </button></div>`;
   }).join("");
-
   list.querySelectorAll(".check").forEach((b) => {
     b.onclick = () => {
-      const r = visible[+b.dataset.i];
-      if (r.isDone) return; // completion is final — stars are awarded, no un-earn
-      const earner = r.task.assigned_to || state.member.id; // assignee earns; fall back to current
-      // optimistic: queue locally (survives offline), reflect done immediately, then sync.
-      // replay always goes through complete_task RPC — never a direct balance write.
-      enqueueCompletion(r.task, r.occ, earner);
+      const r = rows[+b.dataset.i];
+      if (r.isDone) return;
+      enqueueCompletion(r.task, r.occ, mid);
       if (r.task.star_reward > 0) starBurst(r.task.star_reward);
-      renderTasks();
+      const todayRows = rows.filter((x) => x.dueKey === todayKey);
+      if (todayRows.length && todayRows.every((x) => x.isDone || x === r)) celebrate();
+      renderChores();
       flushQueue();
     };
   });
-  list.querySelectorAll(".taskmain").forEach((b) => {
-    b.onclick = () => { openTaskForm(visible[+b.dataset.i].task); };
+  list.querySelectorAll(".taskmain").forEach((b) => { b.onclick = () => openTaskForm(rows[+b.dataset.i].task); });
+
+  const rb = document.getElementById("rewardbank");
+  rb.innerHTML = rewards.length ? rewards.map((r) => {
+    const ok = bal >= r.star_cost;
+    const pct = Math.min(100, Math.round((bal / Math.max(1, r.star_cost)) * 100));
+    return `<div class="rwbank${ok ? " ready" : ""}">
+      <div class="rwbtop"><span>${esc(r.emoji || "🎁")} ${esc(r.title)}</span>${ok
+        ? `<button class="pill-redeem" data-id="${r.id}">Redeem · −${r.star_cost}⭐</button>`
+        : `<span class="rwcostmut">${r.star_cost}⭐</span>`}</div>
+      <div class="lbbar"><i style="width:${pct}%;background:var(--star)"></i></div>
+      <div class="rwbnote"><span>${ok ? "Ready to redeem 🎉" : (r.star_cost - bal) + " stars to go"}</span><button class="link rwedit" data-id="${r.id}">edit</button></div>
+    </div>`;
+  }).join("") : `<p class="sub">No rewards yet — create one below.</p>`;
+  rb.querySelectorAll(".pill-redeem").forEach((b) => {
+    b.onclick = async () => {
+      const r = rewardsById[b.dataset.id];
+      if (!confirm(`Redeem "${r.title}" for ${r.star_cost} stars?`)) return;
+      b.disabled = true;
+      const { error } = await supabase.rpc("redeem_reward", { p_member: mid, p_reward: r.id });
+      if (error) { b.disabled = false; alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : error.message); return; }
+      celebrate(); renderChores();
+    };
   });
+  rb.querySelectorAll(".rwedit").forEach((b) => { b.onclick = () => openRewardForm(rewardsById[b.dataset.id]); });
+
+  const rl = document.getElementById("redlist");
+  if (rl) rl.innerHTML = reds.map((x) => {
+    const rw = rewardsById[x.reward_id];
+    return `<div class="redrow"><span>${rw ? esc(rw.title) : "Reward"}</span><span class="redcost">−${x.star_cost}⭐</span><span class="redstatus s-${esc(x.status)}">${esc(x.status)}</span></div>`;
+  }).join("");
 }
 
 // ---- Add / Edit task form --------------------------------------------------
 function openTaskForm(task) {
   const isEdit = !!task;
-  const whoVal = task ? (task.assigned_to || "") : state.member.id;
+  const whoVal = task ? (task.assigned_to || "") : (state.choreMember || state.member.id);
   const rui = parseRuleToUI(task ? task.rrule : null);
   const memberOpts = `<option value=""${!whoVal ? " selected" : ""}>Anyone</option>` +
     state.members.map((m) => `<option value="${m.id}"${whoVal === m.id ? " selected" : ""}>${esc(m.name)}</option>`).join("");
@@ -1112,7 +1195,7 @@ function openTaskForm(task) {
         <input id="t_due" type="date" value="${esc(task?.due_date || "")}" />
         <label>Star reward</label>
         <input id="t_star" type="number" min="0" step="1" value="${Number.isFinite(task?.star_reward) ? task.star_reward : 0}" />
-        <p class="hint">Stars are awarded in a later milestone — this only sets the value.</p>
+        <p class="hint">Stars are awarded automatically when this chore is checked off.</p>
         ${recurSectionHTML(rui)}
         <div class="err" id="tErr"></div>
       </div>
@@ -1142,7 +1225,7 @@ function openTaskForm(task) {
     const res = isEdit ? await updateTask(task.id, payload) : await createTask(payload);
     if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
     close();
-    renderTasks();
+    renderChores();
   });
 
   if (isEdit) {
@@ -1151,7 +1234,7 @@ function openTaskForm(task) {
       const { error } = await deleteTask(task.id);
       if (error) { document.getElementById("tErr").textContent = error.message; return; }
       close();
-      renderTasks();
+      renderChores();
     };
   }
 }
@@ -1388,13 +1471,13 @@ function openRewardForm(reward) {
     const payload = { title, emoji, star_cost };
     const res = isEdit ? await updateReward(reward.id, payload) : await createReward(payload);
     if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
-    close(); renderRewards();
+    close(); render();
   });
   if (isEdit) document.getElementById("rwDelete").onclick = async () => {
     if (!confirm("Remove this reward from the catalog?")) return;
     const { error } = await deactivateReward(reward.id);
     if (error) { document.getElementById("rwErr").textContent = error.message; return; }
-    close(); renderRewards();
+    close(); render();
   };
 }
 

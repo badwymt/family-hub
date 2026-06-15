@@ -328,6 +328,28 @@ button.finrow:hover{ border-color:var(--accent); }
   background:var(--accent); color:#fff; font-size:28px; line-height:1; border:none; padding:0;
   box-shadow:0 6px 18px rgba(255,122,69,.45); z-index:20; display:grid; place-items:center; }
 
+/* ---- Phase 4: chores avatar home + rewards bank ---- */
+.chorehome{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.choretile{ background:var(--panel); border:1px solid var(--line); border-radius:18px;
+  padding:20px 14px; display:flex; flex-direction:column; align-items:center; gap:6px;
+  color:var(--text); box-shadow:var(--shadow); transition:transform .08s, border-color .12s; }
+.choretile:hover{ transform:translateY(-2px); border-color:var(--accent); }
+.ctname{ font-weight:700; }
+.ctstars{ color:var(--star); font-weight:800; font-variant-numeric:tabular-nums; }
+.ctprog{ font-size:12px; color:var(--muted); }
+.rewardbank{ display:flex; flex-direction:column; gap:10px; }
+.rwbank{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px 14px; box-shadow:var(--shadow); }
+.rwbank.ready{ border-color:var(--star); background:#FFF8E8; }
+.rwbtop{ display:flex; align-items:center; justify-content:space-between; font-weight:700; gap:10px; }
+.rwcostmut{ color:var(--muted); font-weight:700; font-variant-numeric:tabular-nums; }
+.pill-redeem{ background:#FFF1CF; color:#9A6B00; border:1.5px solid var(--star); border-radius:999px;
+  padding:6px 12px; font-weight:700; font-size:13px; white-space:nowrap; }
+.rwbnote{ font-size:12px; color:var(--muted); margin-top:8px; display:flex; justify-content:space-between; align-items:center; }
+.confetti{ position:fixed; top:-30px; font-size:24px; z-index:60; pointer-events:none; animation:cfall 1.8s linear forwards; }
+@keyframes cfall{ to{ transform:translateY(100vh) rotate(380deg); opacity:0; } }
+@media(prefers-reduced-motion:reduce){ .confetti{ display:none; } }
+.topbar h1 .favatar{ box-shadow:0 0 0 2px #fff; }
+
 /* ---- M7b: offline pending marker ---- */
 .pendmark{ font-size:12px; opacity:.85; }
 .offline-banner{ position:sticky; top:0; z-index:40; background:#9A3412; color:#FFE8D6;
