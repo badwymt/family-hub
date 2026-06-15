@@ -1523,7 +1523,19 @@ function cycleLabel(rrule) {
 
 async function viewFinance() {
   await loadContext();
+  if (!state.finView) state.finView = "overview";
   await renderFinance();
+}
+
+const fmtUSD = (v) => fmtMoney(v, "USD");
+const CATCOLORS = ["#7C83DB", "#3FA796", "#E8595B", "#3D8BCD", "#E8A23D", "#D4709B", "#2FA6B0", "#C77DD8"];
+// this-month spend contribution: recurring → monthly-normalised; one-off → counts in its month
+function monthSpend(e, ref) {
+  const amt = Number(e.amount) || 0;
+  if (e.rrule) return amt * monthlyFactor(e.rrule);
+  if (!e.next_due) return 0;
+  const d = new Date(e.next_due + "T00:00");
+  return (d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth()) ? amt : 0;
 }
 
 async function renderFinance() {
@@ -1531,23 +1543,21 @@ async function renderFinance() {
   try { const r = await fetchExpenses(); if (r.error) throw r.error; exps = r.data || []; }
   catch (e) { err = e.message || String(e); }
   const today = new Date();
+  const monthName = MONTHS[today.getMonth()];
+  const monthTotal = exps.reduce((s, e) => s + monthSpend(e, today), 0);
+  const vseg = (v, label) => `<button class="seg${state.finView === v ? " on" : ""}" data-v="${v}">${label}</button>`;
 
-  // monthly total, grouped by currency (so mixed-currency families still make sense)
-  const totals = {};
-  for (const e of exps) {
-    const cur = e.currency || "USD";
-    totals[cur] = (totals[cur] || 0) + Number(e.amount) * monthlyFactor(e.rrule);
+  if (state.finView === "review") {
+    return renderFinanceReview(exps, err, today, monthName, monthTotal, vseg);
   }
-  const totalStr = Object.keys(totals).length
-    ? Object.entries(totals).map(([c, v]) => fmtMoney(v, c)).join("  +  ")
-    : fmtMoney(0, "USD");
 
-  // upcoming bills: next due per expense, sorted ascending
+  // ----- Overview -----
   const upcoming = exps.map((e) => ({ e, due: expenseNextDue(e, today) }))
     .filter((x) => x.due).sort((a, b) => a.due.localeCompare(b.due));
-
   const whoName = (id) => { const m = id ? state.membersById[id] : null; return m ? esc(m.name) : "—"; };
   const whoCol = (id) => { const m = id ? state.membersById[id] : null; return m ? colorFor(m.color) : "#8A8178"; };
+  const perPerson = {};
+  for (const e of exps) { const v = monthSpend(e, today); if (v) perPerson[e.paid_by || "none"] = (perPerson[e.paid_by || "none"] || 0) + v; }
 
   el.innerHTML = `
     <header class="topbar">
@@ -1557,20 +1567,20 @@ async function renderFinance() {
     </header>
     <section class="content">
       ${navTabs("finance")}
+      <div class="viewseg">${vseg("overview", "Overview")}${vseg("review", "Monthly review")}</div>
       ${err ? `<p class="err">${esc(err)}</p>` : ""}
-      <div class="fintotal"><span class="finlabel">Monthly total</span><span class="finamt">${esc(totalStr)}</span></div>
-
-      <h4 class="lbh">▾ Upcoming</h4>
+      <div class="finhead"><div class="h">Spent in ${esc(monthName)}</div><div class="amt">${esc(fmtUSD(monthTotal))}</div></div>
+      <div class="ppstrip">${state.members.map((m) => `<div class="pp">${avatarHTML(m, "avatar sm")}<div class="v">${esc(fmtUSD(perPerson[m.id] || 0))}</div></div>`).join("")}</div>
+      <h4 class="lbh">Upcoming</h4>
       <div class="finlist" id="upcoming"></div>
-
-      <h4 class="lbh">▾ All recurring</h4>
+      <h4 class="lbh" style="margin-top:18px">All expenses</h4>
       <div class="finlist" id="allrec"></div>
-
       <div class="row"><button class="link" id="signout">Sign out</button></div>
     </section>`;
   document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
   document.getElementById("signout").onclick = signOut;
   document.getElementById("addExpense").onclick = () => openExpenseForm(null);
+  el.querySelectorAll(".viewseg .seg").forEach((b) => { b.onclick = () => { state.finView = b.dataset.v; renderFinance(); }; });
 
   const up = document.getElementById("upcoming");
   up.innerHTML = upcoming.length ? upcoming.map(({ e, due }) => `
@@ -1578,7 +1588,7 @@ async function renderFinance() {
       <span class="findue">${esc(fmtDue(due))}</span>
       <span class="finname">${esc(e.name)}</span>
       <span class="finpay" style="color:${whoCol(e.paid_by)}">${whoName(e.paid_by)}</span>
-      <span class="finmoney">${esc(fmtMoney(e.amount, e.currency))}</span>
+      <span class="finmoney">${esc(fmtUSD(e.amount))}</span>
     </div>`).join("") : `<p class="sub">No upcoming bills.</p>`;
 
   const all = document.getElementById("allrec");
@@ -1586,10 +1596,63 @@ async function renderFinance() {
     <button class="finrow finedit" data-id="${e.id}">
       <span class="finname">${esc(e.name)}${e.category ? ` <em class="fincat">${esc(e.category)}</em>` : ""}</span>
       <span class="fincycle">${esc(cycleLabel(e.rrule))}</span>
-      <span class="finmoney">${esc(fmtMoney(e.amount, e.currency))}</span>
+      <span class="finmoney">${esc(fmtUSD(e.amount))}</span>
       <span class="finedithint">edit ›</span>
     </button>`).join("") : `<p class="sub">No expenses yet — add one.</p>`;
   all.querySelectorAll(".finedit").forEach((b) => { b.onclick = () => openExpenseForm(exps.find((x) => x.id === b.dataset.id)); });
+}
+
+// ----- Monthly review: by category, by person, fixed vs variable -----
+function renderFinanceReview(exps, err, today, monthName, monthTotal, vseg) {
+  const cats = {}; let fixed = 0, variable = 0;
+  for (const e of exps) {
+    const v = monthSpend(e, today); if (!v) continue;
+    const c = e.category || "Uncategorised"; cats[c] = (cats[c] || 0) + v;
+    if (e.rrule) fixed += v; else variable += v;
+  }
+  const catList = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+  const byPerson = state.members.map((m) => ({ m, v: exps.reduce((s, e) => s + (e.paid_by === m.id ? monthSpend(e, today) : 0), 0) }));
+  const pMax = Math.max(1, ...byPerson.map((x) => x.v));
+  const ft = fixed + variable;
+
+  el.innerHTML = `
+    <header class="topbar">
+      <button class="iconbtn" id="switch" title="Switch profile">‹</button>
+      <h1>Finance</h1>
+      <button id="addExpense">+ Expense</button>
+    </header>
+    <section class="content">
+      ${navTabs("finance")}
+      <div class="viewseg">${vseg("overview", "Overview")}${vseg("review", "Monthly review")}</div>
+      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <div class="finhead"><div class="h">${esc(monthName)} spending</div><div class="amt">${esc(fmtUSD(monthTotal))}</div></div>
+
+      <h4 class="lbh">By category</h4>
+      <div id="bycat">${catList.length ? catList.map(([c, v], i) => `
+        <div class="catrow">
+          <div class="ct"><span>${esc(c)}</span><span>${esc(fmtUSD(v))} · ${Math.round(v / monthTotal * 100) || 0}%</span></div>
+          <div class="lbbar"><i style="width:${Math.round(v / Math.max(1, monthTotal) * 100)}%;background:${CATCOLORS[i % CATCOLORS.length]}"></i></div>
+        </div>`).join("") : `<p class="sub">Nothing spent this month yet.</p>`}</div>
+
+      <h4 class="lbh" style="margin-top:20px">By person</h4>
+      <div id="byperson">${byPerson.map(({ m, v }) => `
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          ${avatarHTML(m, "avatar sm")}
+          <div style="flex:1"><div class="lbbar"><i style="width:${Math.round(v / pMax * 100)}%;background:${colorFor(m.color)}"></i></div></div>
+          <span class="finmoney">${esc(fmtUSD(v))}</span>
+        </div>`).join("")}</div>
+
+      <h4 class="lbh" style="margin-top:20px">Fixed vs variable</h4>
+      <div class="fixedbar">
+        <div style="width:${Math.round(fixed / Math.max(1, ft) * 100)}%;background:var(--meal)">Fixed ${esc(fmtUSD(fixed))}</div>
+        <div style="flex:1;background:var(--star);color:#5A3D00">Variable ${esc(fmtUSD(variable))}</div>
+      </div>
+      <div class="row"><button class="link" id="signout">Sign out</button></div>
+    </section>`;
+  document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
+  document.getElementById("signout").onclick = signOut;
+  document.getElementById("addExpense").onclick = () => openExpenseForm(null);
+  el.querySelectorAll(".viewseg .seg").forEach((b) => { b.onclick = () => { state.finView = b.dataset.v; renderFinance(); }; });
 }
 
 function openExpenseForm(exp) {

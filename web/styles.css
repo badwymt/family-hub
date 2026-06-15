@@ -350,6 +350,20 @@ button.finrow:hover{ border-color:var(--accent); }
 @media(prefers-reduced-motion:reduce){ .confetti{ display:none; } }
 .topbar h1 .favatar{ box-shadow:0 0 0 2px #fff; }
 
+/* ---- Phase 5: finance review ---- */
+.finhead{ background:linear-gradient(160deg,#FFF3E6,#E7F3EE); border:1px solid var(--line);
+  border-radius:16px; padding:18px; margin-bottom:14px; box-shadow:var(--shadow); }
+.finhead .h{ font-size:13px; color:var(--muted); }
+.finhead .amt{ font-size:32px; font-weight:800; font-variant-numeric:tabular-nums; }
+.ppstrip{ display:flex; gap:16px; margin:0 0 16px; flex-wrap:wrap; }
+.ppstrip .pp{ text-align:center; }
+.ppstrip .pp .v{ font-size:12px; margin-top:4px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.catrow{ margin-top:11px; }
+.catrow .ct{ display:flex; justify-content:space-between; font-size:13px; font-weight:600; }
+.catrow .lbbar{ margin-top:5px; }
+.fixedbar{ display:flex; height:36px; border-radius:9px; overflow:hidden; margin-top:10px; }
+.fixedbar div{ display:grid; place-items:center; font-size:12px; font-weight:600; color:#fff; }
+
 /* ---- M7b: offline pending marker ---- */
 .pendmark{ font-size:12px; opacity:.85; }
 .offline-banner{ position:sticky; top:0; z-index:40; background:#9A3412; color:#FFE8D6;
