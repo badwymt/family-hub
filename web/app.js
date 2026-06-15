@@ -34,7 +34,6 @@ const fmtDayHeader = (d) => `${WD[(d.getDay() + 6) % 7]} ${MONTHS[d.getMonth()].
 const navTabs = (active) => `<nav class="tabs">
   <a href="#/home" class="${active === "home" ? "on" : ""}">Calendar</a>
   <a href="#/tasks" class="${active === "tasks" ? "on" : ""}">Chores</a>
-  <a href="#/stars" class="${active === "stars" ? "on" : ""}">Stars</a>
   <a href="#/finance" class="${active === "finance" ? "on" : ""}">Finance</a>
   <a href="#/meals" class="${active === "meals" ? "on" : ""}">Meals</a>
 </nav>`;
@@ -114,8 +113,7 @@ async function render() {
     const needMember = (fn) => { const m = getMember(); if (!m) return go("#/picker"); state.member = m; return fn(); };
     if (route.startsWith("#/home")) return needMember(viewCalendar);
     if (route.startsWith("#/tasks")) return needMember(viewTasks);
-    if (route.startsWith("#/stars")) return needMember(viewStars);
-    if (route.startsWith("#/rewards")) return needMember(viewRewards);
+    if (route.startsWith("#/stars") || route.startsWith("#/rewards")) return go("#/tasks");
     if (route.startsWith("#/finance")) return needMember(viewFinance);
     if (route.startsWith("#/meals")) return needMember(viewMeals);
     if (route.startsWith("#/family")) return viewFamily();
