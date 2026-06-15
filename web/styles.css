@@ -320,6 +320,13 @@ button.finrow:hover{ border-color:var(--accent); }
 .weekcol h5.today{ color:var(--accent); }
 .wkev{ font-size:11px; color:#fff; padding:4px 6px; border-radius:7px; margin-bottom:5px;
   cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.favatar{ width:18px; height:18px; border-radius:50%; display:inline-grid; place-items:center;
+  color:#fff; font-size:10px; font-weight:700; }
+.bav{ position:absolute; top:6px; right:6px; width:18px; height:18px; border-radius:50%;
+  background:rgba(255,255,255,.28); display:grid; place-items:center; font-size:10px; color:#fff; }
+.fab{ position:fixed; right:18px; bottom:18px; width:56px; height:56px; border-radius:50%;
+  background:var(--accent); color:#fff; font-size:28px; line-height:1; border:none; padding:0;
+  box-shadow:0 6px 18px rgba(255,122,69,.45); z-index:20; display:grid; place-items:center; }
 
 /* ---- M7b: offline pending marker ---- */
 .pendmark{ font-size:12px; opacity:.85; }

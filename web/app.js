@@ -510,11 +510,11 @@ async function renderCalendar() {
 
   let instances = [], counts = {}, loadErr = "";
   try {
-    instances = await fetchInstances(winStart, winEnd, state.calMode);
+    instances = await fetchInstances(winStart, winEnd, "combined");
     counts = await fetchNoteCounts([...new Set(instances.map((e) => e.eventId))]);
   } catch (e) { loadErr = e.message || String(e); }
 
-  if (state.calMode === "combined" && state.hiddenMembers.size) {
+  if (state.hiddenMembers.size) {
     instances = instances.filter((i) => i.member_id == null || !state.hiddenMembers.has(i.member_id));
   }
   const byDay = {};
@@ -524,22 +524,16 @@ async function renderCalendar() {
   el.innerHTML = `
     <header class="topbar">
       <button class="iconbtn" id="switch" title="Switch profile">‹</button>
-      <h1>${state.calMode === "combined"
-        ? `<span class="dot" style="background:${ALL_COLOR}"></span>Family Calendar`
-        : `<span class="dot" style="background:${colorFor(member.color)}"></span>${esc(member.name)}'s Calendar`}</h1>
+      <h1>Calendar</h1>
       <button id="addEvent">+ Event</button>
     </header>
     <section class="content">
       ${navTabs("home")}
       <div class="viewseg">${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}</div>
-      <div class="calmode">
-        <button class="seg${state.calMode === "individual" ? " on" : ""}" id="modeMine">Mine</button>
-        <button class="seg${state.calMode === "combined" ? " on" : ""}" id="modeAll">Combined</button>
-      </div>
-      ${state.calMode === "combined" ? `<div class="chips memberchips">${state.members.map((m) => `
+      <div class="chips memberchips">${state.members.map((m) => `
         <button class="chip mchip${state.hiddenMembers.has(m.id) ? "" : " on"}" data-m="${m.id}">
-          <span class="dot" style="background:${colorFor(m.color)}"></span>${esc(m.name)}
-        </button>`).join("")}</div>` : ""}
+          ${avatarHTML(m, "favatar")}${esc(m.name)}
+        </button>`).join("")}</div>
       <div class="calnav">
         <button class="iconbtn" id="prev">‹</button>
         <strong>${esc(headerLabel)}</strong>
@@ -548,14 +542,14 @@ async function renderCalendar() {
       </div>
       ${loadErr ? `<p class="err">${esc(loadErr)}</p>` : ""}
       <div id="calbody"></div>
+      ${view !== "month" ? `<button class="fab" id="fab" title="Add event">＋</button>` : ""}
       <div class="row"><button class="link" id="signout">Sign out</button></div>
     </section>`;
 
   document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
   document.getElementById("signout").onclick = signOut;
   document.getElementById("addEvent").onclick = () => openEventForm(null, view === "month" ? null : dateKey(state.viewDay));
-  document.getElementById("modeMine").onclick = () => { state.calMode = "individual"; renderCalendar(); };
-  document.getElementById("modeAll").onclick = () => { state.calMode = "combined"; renderCalendar(); };
+  const fab = document.getElementById("fab"); if (fab) fab.onclick = () => openEventForm(null, dateKey(state.viewDay));
   el.querySelectorAll(".mchip").forEach((c) => {
     c.onclick = () => {
       const id = c.dataset.m;
@@ -608,11 +602,12 @@ function renderDayBody(body, byDay, instances) {
     const e = inst.ends_at ? hourFloat(inst.ends_at) : s + 1;
     const top = (s - startH) * HOURPX + 2;
     const height = Math.max(24, (e - s) * HOURPX - 4);
-    const who = m ? esc(m.name) : "All";
     const rep = inst.isRecurring ? " 🔁" : "";
     const tm = `${fmtTime(inst.starts_at)}${inst.ends_at ? "–" + fmtTime(inst.ends_at) : ""}`;
+    const glyph = m ? (m.avatar_url && !/^https?:\/\//.test(m.avatar_url) ? esc(m.avatar_url) : esc((m.name[0] || "?"))) : "";
+    const badge = m ? `<span class="bav">${glyph}</span>` : "";
     return `<div class="evblock" data-iid="${esc(inst.iid)}" style="top:${top}px;height:${height}px;background:${col}">
-      <div class="bt">${esc(inst.title)}${rep}</div><div class="btime">${tm} · ${who}</div></div>`;
+      <div class="bt">${esc(inst.title)}${rep}</div><div class="btime">${tm}</div>${badge}</div>`;
   }).join("");
 
   let nowLine = "";
