@@ -5,9 +5,9 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, SHARED_EMAIL } from "./config.js";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const MEMBER_KEY = "fh_current_member";
 
-const COLORS = { blue: "#3b82f6", green: "#22c55e", amber: "#f59e0b", pink: "#ec4899" };
-const ALL_COLOR = "#8b94a7"; // whole-family events
-const colorFor = (c) => COLORS[c] || "#64748b";
+const COLORS = { blue: "#3D8BCD", green: "#3FA796", amber: "#E8A23D", pink: "#D4709B" };
+const ALL_COLOR = "#B0A48F"; // whole-family events (warm taupe)
+const colorFor = (c) => COLORS[c] || "#8A8178";
 const el = document.getElementById("app");
 
 // shared client-side state (loaded once per session)
@@ -734,7 +734,7 @@ async function loadNotes(eventId) {
   list.innerHTML = data.map((n) => {
     const a = state.membersById[n.author_member_id];
     const who = a ? esc(a.name) : "Someone";
-    const col = a ? colorFor(a.color) : "#64748b";
+    const col = a ? colorFor(a.color) : "#8A8178";
     return `<div class="note"><span class="noteauthor" style="color:${col}">${who}</span> ${esc(n.body)} <span class="notetime">${fmtTime(n.created_at)}</span></div>`;
   }).join("");
 }
@@ -855,7 +855,7 @@ async function renderTasks() {
     const t = r.task;
     const who = t.assigned_to ? state.membersById[t.assigned_to] : null;
     const whoName = who ? esc(who.name) : "Anyone";
-    const whoCol = who ? colorFor(who.color) : "#64748b";
+    const whoCol = who ? colorFor(who.color) : "#8A8178";
     const star = t.star_reward > 0 ? `<span class="taskstar">⭐${t.star_reward}</span>` : "";
     const due = r.dueKey ? `<span class="taskdue">${esc(fmtDue(r.dueKey))}</span>` : "";
     const rep = t.rrule ? " 🔁" : "";
@@ -1267,7 +1267,7 @@ async function renderFinance() {
     .filter((x) => x.due).sort((a, b) => a.due.localeCompare(b.due));
 
   const whoName = (id) => { const m = id ? state.membersById[id] : null; return m ? esc(m.name) : "—"; };
-  const whoCol = (id) => { const m = id ? state.membersById[id] : null; return m ? colorFor(m.color) : "#64748b"; };
+  const whoCol = (id) => { const m = id ? state.membersById[id] : null; return m ? colorFor(m.color) : "#8A8178"; };
 
   el.innerHTML = `
     <header class="topbar">
