@@ -36,6 +36,7 @@ const navTabs = (active) => `<nav class="tabs">
   <a href="#/tasks" class="${active === "tasks" ? "on" : ""}">Chores</a>
   <a href="#/stars" class="${active === "stars" ? "on" : ""}">Stars</a>
   <a href="#/finance" class="${active === "finance" ? "on" : ""}">Finance</a>
+  <a href="#/meals" class="${active === "meals" ? "on" : ""}">Meals</a>
 </nav>`;
 const fmtDue = (d) => {
   if (!d) return "";
@@ -116,6 +117,7 @@ async function render() {
     if (route.startsWith("#/stars")) return needMember(viewStars);
     if (route.startsWith("#/rewards")) return needMember(viewRewards);
     if (route.startsWith("#/finance")) return needMember(viewFinance);
+    if (route.startsWith("#/meals")) return needMember(viewMeals);
     if (route.startsWith("#/family")) return viewFamily();
     return viewPicker();
   } finally {
@@ -474,7 +476,7 @@ async function viewCalendar() {
   if (!state.calMode) state.calMode = "individual";
   if (!state.hiddenMembers) state.hiddenMembers = new Set();
   await renderCalendar();
-  subscribeRealtime(["events", "event_overrides", "event_notes"], () => renderCalendar());
+  subscribeRealtime(["events", "event_overrides", "event_notes", "meals"], () => renderCalendar());
 }
 
 function shiftCal(dir) {
@@ -519,6 +521,14 @@ async function renderCalendar() {
   }
   const byDay = {};
   for (const inst of instances) (byDay[inst.occKey] = byDay[inst.occKey] || []).push(inst);
+
+  // meals overlaid on the calendar (same data the Meals tab manages)
+  const mealsByDay = {};
+  try {
+    const lastDay = new Date(winEnd.getTime() - 86400000);
+    const mr = await fetchMealsRange(dateKey(winStart), dateKey(lastDay));
+    for (const m of (mr.data || [])) (mealsByDay[m.day] = mealsByDay[m.day] || []).push(m);
+  } catch (e) {}
 
   const vseg = (v, label) => `<button class="seg${view === v ? " on" : ""}" data-v="${v}">${label}</button>`;
   el.innerHTML = `
@@ -568,17 +578,18 @@ async function renderCalendar() {
   };
 
   const body = document.getElementById("calbody");
-  if (view === "day") renderDayBody(body, byDay, instances);
-  else if (view === "week") renderWeekBody(body, byDay, instances);
+  if (view === "day") renderDayBody(body, byDay, instances, mealsByDay);
+  else if (view === "week") renderWeekBody(body, byDay, instances, mealsByDay);
   else renderMonthBody(body, weeks, byDay, todayKey);
 }
 
 // ---- day view: dynamic hour window (first event → fill, else 6am–11pm) ------
-function renderDayBody(body, byDay, instances) {
+function renderDayBody(body, byDay, instances, mealsByDay) {
   const dayKey = dateKey(state.viewDay);
   const dayInsts = (byDay[dayKey] || []);
   const timed = dayInsts.filter((i) => !i.all_day);
   const allday = dayInsts.filter((i) => i.all_day);
+  const dayMeals = (mealsByDay && mealsByDay[dayKey]) || [];
 
   let startH, endH;
   if (timed.length) {
@@ -617,7 +628,9 @@ function renderDayBody(body, byDay, instances) {
   }
 
   body.innerHTML = `
-    ${allday.length ? `<div class="alldaystrip"><span class="lbl">All day</span>${allday.map((i) => {
+    ${(allday.length || dayMeals.length) ? `<div class="alldaystrip"><span class="lbl">All day · meals</span>${
+      dayMeals.map((m) => `<span class="mealchip" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)} — ${esc(m.title)}</span>`).join("")
+    }${allday.map((i) => {
       const m = i.member_id ? state.membersById[i.member_id] : null; const col = m ? colorFor(m.color) : ALL_COLOR;
       return `<span class="adchip" data-iid="${esc(i.iid)}" style="background:${col}">${esc(i.title)}</span>`;
     }).join("")}</div>` : ""}
@@ -626,12 +639,13 @@ function renderDayBody(body, byDay, instances) {
   body.querySelectorAll(".evblock,.adchip").forEach((b) => {
     b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
   });
+  body.querySelectorAll(".mealchip").forEach((c) => { c.onclick = () => go("#/meals"); });
   body.querySelectorAll(".hourslot").forEach((s) => { s.onclick = () => openEventForm(null, dayKey); });
   const nl = document.getElementById("nowline"); if (nl) nl.scrollIntoView({ block: "center" });
 }
 
 // ---- week view: 7 day columns with event chips -----------------------------
-function renderWeekBody(body, byDay, instances) {
+function renderWeekBody(body, byDay, instances, mealsByDay) {
   const ws = startOfWeek(state.viewDay);
   const todayKey = dateKey(new Date());
   let cols = "";
@@ -645,10 +659,12 @@ function renderWeekBody(body, byDay, instances) {
       const t = inst.all_day ? "" : fmtTime(inst.starts_at) + " ";
       return `<div class="wkev" data-iid="${esc(inst.iid)}" style="background:${col}">${t}${esc(inst.title)}</div>`;
     }).join("");
-    cols += `<div class="weekcol"><h5 class="${k === todayKey ? "today" : ""}" data-k="${k}">${WD[i]} ${d.getDate()}</h5>${chips}</div>`;
+    const mealChips = ((mealsByDay && mealsByDay[k]) || []).map((m) => `<div class="wkev mealwk" style="background:${MEAL_COLOR}">🍴 ${esc(m.title)}</div>`).join("");
+    cols += `<div class="weekcol"><h5 class="${k === todayKey ? "today" : ""}" data-k="${k}">${WD[i]} ${d.getDate()}</h5>${chips}${mealChips}</div>`;
   }
   body.innerHTML = `<div class="weekgrid">${cols}</div>`;
-  body.querySelectorAll(".wkev").forEach((b) => {
+  body.querySelectorAll(".mealwk").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); go("#/meals"); }; });
+  body.querySelectorAll(".wkev:not(.mealwk)").forEach((b) => {
     b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
   });
   body.querySelectorAll(".weekcol h5").forEach((h) => {
@@ -1726,6 +1742,167 @@ function openExpenseForm(exp) {
     close();
     renderFinance();
   };
+}
+
+// ---- Phase 6: Meals & grocery (have / buy / plan) --------------------------
+const MEAL_COLOR = "#7C83DB";
+const fetchPantry = () => supabase.from("pantry_items").select("id,name,category").order("category").order("name");
+const fetchStores = () => supabase.from("stores").select("id,name,sort_order").order("sort_order");
+const fetchShopping = () => supabase.from("shopping_items").select("id,name,store_id,got").order("created_at");
+const fetchMealsRange = (startKey, endKey) => supabase.from("meals").select("id,title,meal_type,day").gte("day", startKey).lte("day", endKey).order("day");
+const createPantry = (p) => supabase.from("pantry_items").insert({ family_id: state.familyId, ...p }).select().single();
+const delPantry = (id) => supabase.from("pantry_items").delete().eq("id", id);
+const createStore = (name, ord) => supabase.from("stores").insert({ family_id: state.familyId, name, sort_order: ord }).select().single();
+const createShopping = (p) => supabase.from("shopping_items").insert({ family_id: state.familyId, ...p }).select().single();
+const updateShopping = (id, p) => supabase.from("shopping_items").update(p).eq("id", id);
+const delShopping = (id) => supabase.from("shopping_items").delete().eq("id", id);
+const createMeal = (p) => supabase.from("meals").insert({ family_id: state.familyId, ...p }).select().single();
+const delMeal = (id) => supabase.from("meals").delete().eq("id", id);
+
+async function viewMeals() {
+  await loadContext();
+  if (!state.mealView) state.mealView = "have";
+  if (!state.buyStore) state.buyStore = "all";
+  if (!state.viewDay) state.viewDay = new Date();
+  await renderMeals();
+  subscribeRealtime(["pantry_items", "stores", "shopping_items", "meals"], () => renderMeals());
+}
+
+async function renderMeals() {
+  let stores = [], err = "";
+  try { const s = await fetchStores(); if (s.error) throw s.error; stores = s.data || []; } catch (e) { err = e.message || String(e); }
+  state._stores = stores;
+  const seg = (v, label) => `<button class="seg${state.mealView === v ? " on" : ""}" data-v="${v}">${label}</button>`;
+  el.innerHTML = `
+    <header class="topbar">
+      <button class="iconbtn" id="switch" title="Switch profile">‹</button>
+      <h1>Meals &amp; groceries</h1>
+      <span style="width:36px"></span>
+    </header>
+    <section class="content">
+      ${navTabs("meals")}
+      <div class="viewseg">${seg("have", "In the house")}${seg("buy", "Need to buy")}${seg("plan", "Meals")}</div>
+      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <div id="mealbody"></div>
+      <div class="row"><button class="link" id="signout">Sign out</button></div>
+    </section>`;
+  document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
+  document.getElementById("signout").onclick = signOut;
+  el.querySelectorAll(".viewseg .seg").forEach((b) => { b.onclick = () => { state.mealView = b.dataset.v; renderMeals(); }; });
+  const body = document.getElementById("mealbody");
+  if (state.mealView === "have") renderHaveSection(body);
+  else if (state.mealView === "buy") renderBuySection(body, stores);
+  else renderPlanSection(body);
+}
+
+async function renderHaveSection(body) {
+  let items = [];
+  try { const r = await fetchPantry(); if (!r.error) items = r.data || []; } catch (e) {}
+  const cats = [...new Set(items.map((i) => i.category))];
+  body.innerHTML = `
+    <div class="card" style="margin:0">
+      <div class="mealhead"><strong>In the house</strong><button class="pill on" id="addHave">＋ Add</button></div>
+      <p class="sub" style="text-align:left;margin:2px 0 10px">A quick glance before shopping. Tap “→ buy” when running low.</p>
+      ${items.length ? cats.map((cat) => `<div class="mut catlbl">${esc(cat)}</div>${items.filter((i) => i.category === cat).map((i) => `
+        <div class="mrow"><span style="flex:1;font-weight:600">${esc(i.name)}</span>
+          <button class="pill" data-buy="${i.id}" data-n="${esc(i.name)}">→ buy</button>
+          <button class="xbtn" data-del="${i.id}">✕</button></div>`).join("")}`).join("") : `<p class="sub">Nothing yet — add staples like milk, eggs.</p>`}
+    </div>`;
+  document.getElementById("addHave").onclick = () => mealForm("have");
+  body.querySelectorAll("[data-buy]").forEach((b) => b.onclick = async () => { await createShopping({ name: b.dataset.n, store_id: null, got: false }); state.mealView = "buy"; renderMeals(); });
+  body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { await delPantry(b.dataset.del); renderMeals(); });
+}
+
+async function renderBuySection(body, stores) {
+  let items = [];
+  try { const r = await fetchShopping(); if (!r.error) items = r.data || []; } catch (e) {}
+  const storeById = Object.fromEntries(stores.map((s) => [s.id, s]));
+  const storeColor = (id) => { const idx = stores.findIndex((s) => s.id === id); return idx < 0 ? "#8A8178" : CATCOLORS[idx % CATCOLORS.length]; };
+  const filtered = state.buyStore === "all" ? items : items.filter((i) => i.store_id === state.buyStore);
+  const active = filtered.filter((i) => !i.got), got = filtered.filter((i) => i.got);
+  const pill = (id, label) => `<button class="spill${state.buyStore === id ? " on" : ""}" data-s="${id}">${esc(label)}</button>`;
+  body.innerHTML = `
+    <div class="spillrow">${pill("all", "All")}${stores.map((s) => pill(s.id, s.name)).join("")}</div>
+    <div class="card" style="margin:0">
+      <div class="mealhead"><strong>Need to buy</strong><button class="pill on" id="addBuy">＋ Add</button></div>
+      ${state.buyStore !== "all" ? `<p class="sub" style="text-align:left;margin:2px 0 8px">New items here auto-tag ${esc((storeById[state.buyStore] || {}).name || "")}.</p>` : ""}
+      <div id="buylist">${active.length ? active.map((i) => `
+        <div class="mrow"><button class="ck" data-got="${i.id}"></button><span style="flex:1;font-weight:600">${esc(i.name)}</span>
+          ${i.store_id ? `<span class="tagchip" style="background:${storeColor(i.store_id)}">${esc((storeById[i.store_id] || {}).name || "")}</span>` : ""}
+          <button class="xbtn" data-del="${i.id}">✕</button></div>`).join("") : `<p class="sub">Nothing to buy.</p>`}
+        ${got.length ? `<div class="mut catlbl">Got it (${got.length})</div>${got.map((i) => `
+        <div class="mrow"><button class="ck on" data-got="${i.id}">✓</button><span style="flex:1;text-decoration:line-through;color:var(--muted)">${esc(i.name)}</span>
+          <button class="xbtn" data-del="${i.id}">✕</button></div>`).join("")}` : ""}
+      </div>
+    </div>`;
+  body.querySelectorAll(".spill").forEach((b) => b.onclick = () => { state.buyStore = b.dataset.s; renderMeals(); });
+  document.getElementById("addBuy").onclick = () => mealForm("buy");
+  body.querySelectorAll("[data-got]").forEach((b) => b.onclick = async () => { const it = items.find((x) => x.id === b.dataset.got); await updateShopping(b.dataset.got, { got: !it.got }); renderMeals(); });
+  body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { await delShopping(b.dataset.del); renderMeals(); });
+}
+
+async function renderPlanSection(body) {
+  const ws = startOfWeek(state.viewDay || new Date());
+  const days = []; for (let i = 0; i < 7; i++) { const d = new Date(ws); d.setDate(d.getDate() + i); days.push(d); }
+  let meals = [];
+  try { const r = await fetchMealsRange(dateKey(days[0]), dateKey(days[6])); if (!r.error) meals = r.data || []; } catch (e) {}
+  const byDay = {}; for (const m of meals) (byDay[m.day] = byDay[m.day] || []).push(m);
+  const todayKey = dateKey(new Date());
+  body.innerHTML = `
+    <div class="card" style="margin:0">
+      <div class="mealhead"><strong>This week's meals</strong><button class="pill on" id="addMeal">＋ Add meal</button></div>
+      <p class="sub" style="text-align:left;margin:2px 0 10px">Meals show up on the family calendar for that day.</p>
+      ${days.map((d, i) => { const k = dateKey(d); const dm = (byDay[k] || []);
+        return `<div class="planday"><div class="plandh${k === todayKey ? " today" : ""}">${WD[i]} ${d.getDate()}</div>
+          ${dm.length ? dm.map((m) => `<div class="mealrow"><span class="tagchip" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)}</span><span style="font-weight:600;flex:1">${esc(m.title)}</span><button class="xbtn" data-del="${m.id}">✕</button></div>`).join("") : `<span class="sub">— no meal</span>`}</div>`;
+      }).join("")}
+    </div>`;
+  document.getElementById("addMeal").onclick = () => mealForm("plan");
+  body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { await delMeal(b.dataset.del); renderMeals(); });
+}
+
+function mealForm(kind) {
+  const stores = state._stores || [];
+  let inner = "";
+  if (kind === "have") inner = `<label>Item</label><input id="mf_name" placeholder="Milk" />
+    <label>Where</label><select id="mf_cat"><option>Fridge</option><option>Pantry</option><option>Freezer</option></select>`;
+  else if (kind === "buy") inner = `<label>Item</label><input id="mf_name" placeholder="Cheese" />
+    <label>Store</label><select id="mf_store"><option value="">No store</option>${stores.map((s) => `<option value="${s.id}"${state.buyStore === s.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}<option value="__new">+ New store…</option></select>
+    <input id="mf_newstore" placeholder="New store name" style="display:none;margin-top:8px" />`;
+  else inner = `<label>Meal</label><input id="mf_name" placeholder="Pasta night" />
+    <label>Type</label><select id="mf_type"><option>Dinner</option><option>Lunch</option><option>Breakfast</option></select>
+    <label>Day</label><input id="mf_day" type="date" value="${dateKey(state.viewDay || new Date())}" />
+    <p class="hint">Saving adds it to that day on the family calendar.</p>`;
+  const titles = { have: "Add to “in the house”", buy: "Add to buy list", plan: "Add meal" };
+  const overlay = document.createElement("div"); overlay.className = "modal-overlay";
+  overlay.innerHTML = `<form class="modal" id="mealForm2"><div class="modal-top"><button type="button" class="iconbtn" id="mfClose">✕</button><strong>${titles[kind]}</strong><button type="submit" id="mfSave">Save</button></div><div class="modal-body">${inner}<div class="err" id="mfErr"></div></div></form>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("mfClose").onclick = close;
+  if (kind === "buy") { const sel = document.getElementById("mf_store"); sel.onchange = () => { document.getElementById("mf_newstore").style.display = sel.value === "__new" ? "block" : "none"; }; }
+  document.getElementById("mealForm2").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("mfErr"); err.textContent = "";
+    const name = (document.getElementById("mf_name").value || "").trim();
+    if (!name) { err.textContent = "Required."; return; }
+    const save = document.getElementById("mfSave"); save.disabled = true; save.textContent = "Saving…";
+    let res;
+    if (kind === "have") res = await createPantry({ name, category: document.getElementById("mf_cat").value });
+    else if (kind === "buy") {
+      let store_id = document.getElementById("mf_store").value || null;
+      if (store_id === "__new") {
+        const nm = (document.getElementById("mf_newstore").value || "").trim();
+        if (!nm) { err.textContent = "Enter the new store name."; save.disabled = false; save.textContent = "Save"; return; }
+        const sr = await createStore(nm, (state._stores || []).length);
+        if (sr.error) { err.textContent = sr.error.message; save.disabled = false; save.textContent = "Save"; return; }
+        store_id = sr.data.id;
+      } else if (!store_id) store_id = state.buyStore !== "all" ? state.buyStore : null;
+      res = await createShopping({ name, store_id, got: false });
+    } else res = await createMeal({ title: name, meal_type: document.getElementById("mf_type").value, day: document.getElementById("mf_day").value });
+    if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    close(); renderMeals();
+  });
 }
 
 async function signOut() {
