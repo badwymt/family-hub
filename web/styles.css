@@ -284,6 +284,43 @@ button.finrow:hover{ border-color:var(--accent); }
 .swatch{ width:34px; height:34px; padding:0; border-radius:50%; border:2px solid transparent; cursor:pointer; }
 .swatch.sel{ border-color:var(--text); }
 
+/* ---- Phase 3: day / week views ---- */
+.viewseg{ display:flex; gap:6px; background:var(--panel); border:1px solid var(--line);
+  border-radius:11px; padding:4px; margin-bottom:12px; box-shadow:var(--shadow); }
+.viewseg .seg{ flex:1; padding:8px; border-radius:8px; background:transparent; color:var(--muted); font-weight:600; }
+.viewseg .seg.on{ background:var(--accent); color:#fff; }
+.calnav{ display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.calnav strong{ font-size:16px; flex:1; }
+.calnav .link{ margin-left:auto; }
+
+.alldaystrip{ display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+  background:var(--panel2); border-radius:12px; padding:10px; margin-bottom:10px; }
+.alldaystrip .lbl{ font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.adchip{ font-size:12px; color:#fff; padding:3px 10px; border-radius:999px; font-weight:600; cursor:pointer; }
+
+.daygrid{ position:relative; background:var(--panel); border:1px solid var(--line);
+  border-radius:14px; overflow:hidden; box-shadow:var(--shadow); }
+.hourrow{ display:flex; height:56px; border-top:1px solid var(--line); }
+.hourrow:first-child{ border-top:none; }
+.hourlbl{ width:60px; flex:none; font-size:11px; color:var(--muted); padding:4px 8px; font-variant-numeric:tabular-nums; }
+.hourslot{ flex:1; position:relative; cursor:pointer; }
+.hourslot:hover::after{ content:'+'; position:absolute; left:8px; top:4px; color:var(--muted); font-weight:700; }
+.evlayer{ position:absolute; top:0; left:60px; right:0; bottom:0; pointer-events:none; }
+.evblock{ position:absolute; left:8px; right:8px; border-radius:9px; padding:6px 9px; color:#fff;
+  pointer-events:auto; cursor:pointer; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.14); }
+.evblock .bt{ font-weight:700; font-size:12px; line-height:1.25; }
+.evblock .btime{ font-size:11px; opacity:.92; font-variant-numeric:tabular-nums; }
+.nowline{ position:absolute; left:0; right:0; height:2px; background:var(--accent); z-index:5; }
+.nowline::before{ content:''; position:absolute; left:-4px; top:-4px; width:9px; height:9px; border-radius:50%; background:var(--accent); }
+
+.weekgrid{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+.weekcol{ background:var(--panel); border:1px solid var(--line); border-radius:11px;
+  padding:8px 7px; min-height:120px; box-shadow:var(--shadow); }
+.weekcol h5{ margin:0 0 8px; font-size:11px; color:var(--muted); text-align:center; font-weight:700; cursor:pointer; }
+.weekcol h5.today{ color:var(--accent); }
+.wkev{ font-size:11px; color:#fff; padding:4px 6px; border-radius:7px; margin-bottom:5px;
+  cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+
 /* ---- M7b: offline pending marker ---- */
 .pendmark{ font-size:12px; opacity:.85; }
 .offline-banner{ position:sticky; top:0; z-index:40; background:#9A3412; color:#FFE8D6;

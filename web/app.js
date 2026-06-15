@@ -460,39 +460,67 @@ function monthMatrix(year, month) {
   return weeks;
 }
 
+// ---- day/week view helpers (Phase 3) ---------------------------------------
+const HOURPX = 56;
+const hourFloat = (iso) => { const d = new Date(iso); return d.getHours() + d.getMinutes() / 60; };
+const startOfWeek = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+
 async function viewCalendar() {
   await loadContext();
-  if (!state.viewMonth) state.viewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const now = new Date();
+  if (!state.viewMonth) state.viewMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  if (!state.viewDay) state.viewDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (!state.calView) state.calView = "day";
   if (!state.calMode) state.calMode = "individual";
   if (!state.hiddenMembers) state.hiddenMembers = new Set();
   await renderCalendar();
   subscribeRealtime(["events", "event_overrides", "event_notes"], () => renderCalendar());
 }
 
+function shiftCal(dir) {
+  if (state.calView === "month") state.viewMonth = new Date(state.viewMonth.getFullYear(), state.viewMonth.getMonth() + dir, 1);
+  else { const d = new Date(state.viewDay); d.setDate(d.getDate() + dir * (state.calView === "week" ? 7 : 1)); state.viewDay = d; }
+  renderCalendar();
+}
+
 async function renderCalendar() {
   const member = state.member;
-  const vm = state.viewMonth;
-  const weeks = monthMatrix(vm.getFullYear(), vm.getMonth());
-  const winStart = weeks[0][0];
-  const winEnd = new Date(weeks[5][6]); winEnd.setDate(winEnd.getDate() + 1);
+  const view = state.calView;
   const todayKey = dateKey(new Date());
 
-  let instances = [], counts = {};
-  let loadErr = "";
+  // window for the active view
+  let winStart, winEnd, headerLabel, weeks = null;
+  if (view === "month") {
+    const vm = state.viewMonth;
+    weeks = monthMatrix(vm.getFullYear(), vm.getMonth());
+    winStart = weeks[0][0];
+    winEnd = new Date(weeks[5][6]); winEnd.setDate(winEnd.getDate() + 1);
+    headerLabel = `${MONTHS[vm.getMonth()]} ${vm.getFullYear()}`;
+  } else if (view === "week") {
+    const ws = startOfWeek(state.viewDay);
+    winStart = new Date(ws);
+    winEnd = new Date(ws); winEnd.setDate(winEnd.getDate() + 7);
+    const we = new Date(ws); we.setDate(we.getDate() + 6);
+    headerLabel = `${MONTHS[ws.getMonth()].slice(0, 3)} ${ws.getDate()} – ${MONTHS[we.getMonth()].slice(0, 3)} ${we.getDate()}`;
+  } else {
+    winStart = new Date(state.viewDay); winStart.setHours(0, 0, 0, 0);
+    winEnd = new Date(winStart); winEnd.setDate(winEnd.getDate() + 1);
+    headerLabel = fmtDayHeader(state.viewDay);
+  }
+
+  let instances = [], counts = {}, loadErr = "";
   try {
     instances = await fetchInstances(winStart, winEnd, state.calMode);
     counts = await fetchNoteCounts([...new Set(instances.map((e) => e.eventId))]);
   } catch (e) { loadErr = e.message || String(e); }
 
-  // combined view: hide members whose chip is toggled off (whole-family always shows)
   if (state.calMode === "combined" && state.hiddenMembers.size) {
     instances = instances.filter((i) => i.member_id == null || !state.hiddenMembers.has(i.member_id));
   }
-
-  // group expanded instances by local day key
   const byDay = {};
-  for (const inst of instances) { (byDay[inst.occKey] = byDay[inst.occKey] || []).push(inst); }
+  for (const inst of instances) (byDay[inst.occKey] = byDay[inst.occKey] || []).push(inst);
 
+  const vseg = (v, label) => `<button class="seg${view === v ? " on" : ""}" data-v="${v}">${label}</button>`;
   el.innerHTML = `
     <header class="topbar">
       <button class="iconbtn" id="switch" title="Switch profile">‹</button>
@@ -503,6 +531,7 @@ async function renderCalendar() {
     </header>
     <section class="content">
       ${navTabs("home")}
+      <div class="viewseg">${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}</div>
       <div class="calmode">
         <button class="seg${state.calMode === "individual" ? " on" : ""}" id="modeMine">Mine</button>
         <button class="seg${state.calMode === "combined" ? " on" : ""}" id="modeAll">Combined</button>
@@ -511,40 +540,22 @@ async function renderCalendar() {
         <button class="chip mchip${state.hiddenMembers.has(m.id) ? "" : " on"}" data-m="${m.id}">
           <span class="dot" style="background:${colorFor(m.color)}"></span>${esc(m.name)}
         </button>`).join("")}</div>` : ""}
-      <div class="monthnav">
+      <div class="calnav">
         <button class="iconbtn" id="prev">‹</button>
-        <strong>${MONTHS[vm.getMonth()]} ${vm.getFullYear()}</strong>
+        <strong>${esc(headerLabel)}</strong>
         <button class="iconbtn" id="next">›</button>
         <button class="link" id="today">Today</button>
       </div>
       ${loadErr ? `<p class="err">${esc(loadErr)}</p>` : ""}
-      <div class="cal">
-        <div class="cal-head">${WD.map((d) => `<span>${d}</span>`).join("")}</div>
-        <div class="cal-grid">
-          ${weeks.flat().map((d) => {
-            const k = dateKey(d);
-            const inMonth = d.getMonth() === vm.getMonth();
-            const dayEvents = byDay[k] || [];
-            const dots = dayEvents.slice(0, 4).map((ev) => {
-              const col = ev.member_id ? colorFor(state.membersById[ev.member_id]?.color) : ALL_COLOR;
-              return `<i class="evdot" style="background:${col}"></i>`;
-            }).join("");
-            return `<button class="cal-cell${inMonth ? "" : " muted"}${k === todayKey ? " today" : ""}${k === state.selectedKey ? " sel" : ""}" data-key="${k}">
-              <span class="cal-num">${d.getDate()}</span>
-              <span class="cal-dots">${dots}</span>
-            </button>`;
-          }).join("")}
-        </div>
-      </div>
-      <div class="daylist" id="daylist"></div>
+      <div id="calbody"></div>
       <div class="row"><button class="link" id="signout">Sign out</button></div>
     </section>`;
 
   document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
   document.getElementById("signout").onclick = signOut;
-  document.getElementById("addEvent").onclick = () => openEventForm(null);
-  document.getElementById("modeMine").onclick = () => { state.calMode = "individual"; state.selectedKey = null; renderCalendar(); };
-  document.getElementById("modeAll").onclick = () => { state.calMode = "combined"; state.selectedKey = null; renderCalendar(); };
+  document.getElementById("addEvent").onclick = () => openEventForm(null, view === "month" ? null : dateKey(state.viewDay));
+  document.getElementById("modeMine").onclick = () => { state.calMode = "individual"; renderCalendar(); };
+  document.getElementById("modeAll").onclick = () => { state.calMode = "combined"; renderCalendar(); };
   el.querySelectorAll(".mchip").forEach((c) => {
     c.onclick = () => {
       const id = c.dataset.m;
@@ -552,44 +563,125 @@ async function renderCalendar() {
       renderCalendar();
     };
   });
-  document.getElementById("prev").onclick = () => { state.viewMonth = new Date(vm.getFullYear(), vm.getMonth() - 1, 1); state.selectedKey = null; renderCalendar(); };
-  document.getElementById("next").onclick = () => { state.viewMonth = new Date(vm.getFullYear(), vm.getMonth() + 1, 1); state.selectedKey = null; renderCalendar(); };
-  document.getElementById("today").onclick = () => { state.viewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1); state.selectedKey = todayKey; renderCalendar(); };
-  el.querySelectorAll(".cal-cell").forEach((c) => {
-    c.onclick = () => { const k = c.dataset.key; state.selectedKey = state.selectedKey === k ? null : k; renderCalendar(); };
-  });
+  el.querySelectorAll(".viewseg .seg").forEach((b) => { b.onclick = () => { state.calView = b.dataset.v; renderCalendar(); }; });
+  document.getElementById("prev").onclick = () => shiftCal(-1);
+  document.getElementById("next").onclick = () => shiftCal(1);
+  document.getElementById("today").onclick = () => {
+    const n = new Date();
+    state.viewDay = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    state.viewMonth = new Date(n.getFullYear(), n.getMonth(), 1);
+    renderCalendar();
+  };
 
-  // day list (filtered to selected day, else whole visible window)
-  const dl = document.getElementById("daylist");
-  const keys = Object.keys(byDay).sort();
-  const showKeys = state.selectedKey ? (byDay[state.selectedKey] ? [state.selectedKey] : []) : keys;
-  if (state.selectedKey && showKeys.length === 0) {
-    dl.innerHTML = `<div class="daygroup"><h4>▾ ${esc(fmtDayHeader(new Date(state.selectedKey + "T00:00")))}</h4><p class="sub">No events. <button class="link" id="addHere">+ Add one</button></p></div>`;
-    const a = document.getElementById("addHere"); if (a) a.onclick = () => openEventForm(null, state.selectedKey);
-  } else if (showKeys.length === 0) {
-    dl.innerHTML = `<p class="sub" style="text-align:center;margin-top:20px">No events this month.</p>`;
-  } else {
-    dl.innerHTML = showKeys.map((k) => {
-      const items = byDay[k].slice().sort((a, b) => a.starts_at.localeCompare(b.starts_at)).map((inst) => {
-        const m = inst.member_id ? state.membersById[inst.member_id] : null;
-        const col = m ? colorFor(m.color) : ALL_COLOR;
-        const who = m ? esc(m.name) : "All";
-        const time = inst.all_day ? "All day" : fmtTime(inst.starts_at);
-        const n = counts[inst.eventId] || 0;
-        const rep = inst.isRecurring ? " 🔁" : "";
-        return `<button class="ev" data-iid="${esc(inst.iid)}">
-          <span class="evbar" style="background:${col}"></span>
-          <span class="evtime">${time}</span>
-          <span class="evtitle">${esc(inst.title)}${rep}</span>
-          <span class="evwho" style="color:${col}">${who}${n ? ` · 📝${n}` : ""}</span>
-        </button>`;
-      }).join("");
-      return `<div class="daygroup"><h4>▾ ${esc(fmtDayHeader(new Date(k + "T00:00")))}</h4>${items}</div>`;
-    }).join("");
-    dl.querySelectorAll(".ev").forEach((b) => {
-      b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); openEventForm(inst); };
-    });
+  const body = document.getElementById("calbody");
+  if (view === "day") renderDayBody(body, byDay, instances);
+  else if (view === "week") renderWeekBody(body, byDay, instances);
+  else renderMonthBody(body, weeks, byDay, todayKey);
+}
+
+// ---- day view: dynamic hour window (first event → fill, else 6am–11pm) ------
+function renderDayBody(body, byDay, instances) {
+  const dayKey = dateKey(state.viewDay);
+  const dayInsts = (byDay[dayKey] || []);
+  const timed = dayInsts.filter((i) => !i.all_day);
+  const allday = dayInsts.filter((i) => i.all_day);
+
+  let startH, endH;
+  if (timed.length) {
+    const starts = timed.map((i) => hourFloat(i.starts_at));
+    const ends = timed.map((i) => (i.ends_at ? hourFloat(i.ends_at) : hourFloat(i.starts_at) + 1));
+    startH = Math.max(0, Math.floor(Math.min(...starts)));
+    endH = Math.min(24, Math.max(23, Math.ceil(Math.max(...ends))));
+    if (startH >= endH) startH = Math.max(0, endH - 1);
+  } else { startH = 6; endH = 23; }
+
+  let rows = "";
+  for (let h = startH; h < endH; h++) {
+    const hr = (h % 12) || 12, ap = h < 12 ? "am" : "pm";
+    rows += `<div class="hourrow"><span class="hourlbl">${hr} ${ap}</span><div class="hourslot" data-h="${h}"></div></div>`;
   }
+
+  const blocks = timed.slice().sort((a, b) => a.starts_at.localeCompare(b.starts_at)).map((inst) => {
+    const m = inst.member_id ? state.membersById[inst.member_id] : null;
+    const col = m ? colorFor(m.color) : ALL_COLOR;
+    const s = hourFloat(inst.starts_at);
+    const e = inst.ends_at ? hourFloat(inst.ends_at) : s + 1;
+    const top = (s - startH) * HOURPX + 2;
+    const height = Math.max(24, (e - s) * HOURPX - 4);
+    const who = m ? esc(m.name) : "All";
+    const rep = inst.isRecurring ? " 🔁" : "";
+    const tm = `${fmtTime(inst.starts_at)}${inst.ends_at ? "–" + fmtTime(inst.ends_at) : ""}`;
+    return `<div class="evblock" data-iid="${esc(inst.iid)}" style="top:${top}px;height:${height}px;background:${col}">
+      <div class="bt">${esc(inst.title)}${rep}</div><div class="btime">${tm} · ${who}</div></div>`;
+  }).join("");
+
+  let nowLine = "";
+  if (dayKey === dateKey(new Date())) {
+    const nowH = hourFloat(new Date().toISOString());
+    if (nowH >= startH && nowH <= endH) nowLine = `<div class="nowline" id="nowline" style="top:${(nowH - startH) * HOURPX}px"></div>`;
+  }
+
+  body.innerHTML = `
+    ${allday.length ? `<div class="alldaystrip"><span class="lbl">All day</span>${allday.map((i) => {
+      const m = i.member_id ? state.membersById[i.member_id] : null; const col = m ? colorFor(m.color) : ALL_COLOR;
+      return `<span class="adchip" data-iid="${esc(i.iid)}" style="background:${col}">${esc(i.title)}</span>`;
+    }).join("")}</div>` : ""}
+    <div class="daygrid">${rows}<div class="evlayer">${blocks}${nowLine}</div></div>`;
+
+  body.querySelectorAll(".evblock,.adchip").forEach((b) => {
+    b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
+  });
+  body.querySelectorAll(".hourslot").forEach((s) => { s.onclick = () => openEventForm(null, dayKey); });
+  const nl = document.getElementById("nowline"); if (nl) nl.scrollIntoView({ block: "center" });
+}
+
+// ---- week view: 7 day columns with event chips -----------------------------
+function renderWeekBody(body, byDay, instances) {
+  const ws = startOfWeek(state.viewDay);
+  const todayKey = dateKey(new Date());
+  let cols = "";
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(ws); d.setDate(d.getDate() + i);
+    const k = dateKey(d);
+    const evs = (byDay[k] || []).slice().sort((a, b) => (a.all_day === b.all_day ? a.starts_at.localeCompare(b.starts_at) : (a.all_day ? -1 : 1)));
+    const chips = evs.map((inst) => {
+      const m = inst.member_id ? state.membersById[inst.member_id] : null;
+      const col = m ? colorFor(m.color) : ALL_COLOR;
+      const t = inst.all_day ? "" : fmtTime(inst.starts_at) + " ";
+      return `<div class="wkev" data-iid="${esc(inst.iid)}" style="background:${col}">${t}${esc(inst.title)}</div>`;
+    }).join("");
+    cols += `<div class="weekcol"><h5 class="${k === todayKey ? "today" : ""}" data-k="${k}">${WD[i]} ${d.getDate()}</h5>${chips}</div>`;
+  }
+  body.innerHTML = `<div class="weekgrid">${cols}</div>`;
+  body.querySelectorAll(".wkev").forEach((b) => {
+    b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
+  });
+  body.querySelectorAll(".weekcol h5").forEach((h) => {
+    h.onclick = () => { state.viewDay = new Date(h.dataset.k + "T00:00"); state.calView = "day"; renderCalendar(); };
+  });
+}
+
+// ---- month view: grid of per-person dots; tap a day → day view -------------
+function renderMonthBody(body, weeks, byDay, todayKey) {
+  body.innerHTML = `
+    <div class="cal">
+      <div class="cal-head">${WD.map((d) => `<span>${d}</span>`).join("")}</div>
+      <div class="cal-grid">
+        ${weeks.flat().map((d) => {
+          const k = dateKey(d);
+          const inMonth = d.getMonth() === state.viewMonth.getMonth();
+          const dots = (byDay[k] || []).slice(0, 4).map((ev) => {
+            const col = ev.member_id ? colorFor(state.membersById[ev.member_id]?.color) : ALL_COLOR;
+            return `<i class="evdot" style="background:${col}"></i>`;
+          }).join("");
+          return `<button class="cal-cell${inMonth ? "" : " muted"}${k === todayKey ? " today" : ""}" data-key="${k}">
+            <span class="cal-num">${d.getDate()}</span><span class="cal-dots">${dots}</span></button>`;
+        }).join("")}
+      </div>
+    </div>`;
+  body.querySelectorAll(".cal-cell").forEach((c) => {
+    c.onclick = () => { state.viewDay = new Date(c.dataset.key + "T00:00"); state.calView = "day"; renderCalendar(); };
+  });
 }
 
 // ---- shared recurrence editor (used by event + task forms) -----------------
