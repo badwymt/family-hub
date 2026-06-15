@@ -1,0 +1,59 @@
+name: Weekly DB backup
+
+# Dumps the whole database weekly with pg_dump (custom format, restorable via
+# pg_restore), commits it under backups/ AND uploads it as a 90-day artifact.
+#
+# Requires ONE repo secret:
+#   SUPABASE_DB_URL  =  the Session-pooler connection URI (incl. password) from
+#   Supabase → Project Settings → Database → Connection string → "Session pooler" → URI
+#   e.g. postgresql://postgres.shnbrpvuzbkcqvxvvxlr:YOUR_DB_PASSWORD@aws-0-<region>.pooler.supabase.com:5432/postgres
+
+on:
+  schedule:
+    - cron: "30 5 * * 0" # Sundays at 05:30 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # needed to commit the dump back to the repo
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL 17 client (matches the server version)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then echo "Missing SUPABASE_DB_URL secret"; exit 1; fi
+          mkdir -p backups
+          ts=$(date -u +%Y-%m-%d)
+          /usr/lib/postgresql/17/bin/pg_dump "$SUPABASE_DB_URL" \
+            --no-owner --no-privileges -Fc -f "backups/familyhub-$ts.dump"
+          ls -lh backups
+
+      - name: Commit the dump to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backups/
+          git commit -m "Weekly DB backup $(date -u +%Y-%m-%d)" || echo "no changes to commit"
+          git push
+
+      - name: Upload as workflow artifact (90-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: backups/*.dump
+          retention-days: 90

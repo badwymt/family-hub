@@ -1,0 +1,15 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# never commit secrets or local env
+.env
+.env.*
+*.local
+
+# sandbox scratch (not part of the app)
+*.mjs
+node_modules/
