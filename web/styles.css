@@ -272,6 +272,18 @@ button.finrow:hover{ border-color:var(--accent); }
 .chip.mchip.on{ opacity:1; border-color:var(--accent); }
 .chip.mchip .dot{ width:10px; height:10px; }
 
+/* ---- Phase 2: family / member management ---- */
+.avatar.sm{ width:46px; height:46px; font-size:19px; box-shadow:0 0 0 2px #fff, var(--shadow); }
+.memrow{ display:flex; align-items:center; gap:14px; background:var(--panel); border:1px solid var(--line);
+  border-radius:14px; padding:12px 14px; margin-bottom:10px; box-shadow:var(--shadow); }
+.memrow .meminfo{ flex:1; }
+.memrow .meminfo .mn{ font-weight:700; }
+.memrow .meminfo .mr{ font-size:12px; color:var(--muted); display:flex; align-items:center; gap:5px; margin-top:2px; }
+.memrow .ghost{ flex:0 0 auto; padding:9px 16px; }
+.swatchrow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:4px; }
+.swatch{ width:34px; height:34px; padding:0; border-radius:50%; border:2px solid transparent; cursor:pointer; }
+.swatch.sel{ border-color:var(--text); }
+
 /* ---- M7b: offline pending marker ---- */
 .pendmark{ font-size:12px; opacity:.85; }
 .offline-banner{ position:sticky; top:0; z-index:40; background:#9A3412; color:#FFE8D6;

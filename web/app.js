@@ -5,9 +5,17 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, SHARED_EMAIL } from "./config.js";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const MEMBER_KEY = "fh_current_member";
 
-const COLORS = { blue: "#3D8BCD", green: "#3FA796", amber: "#E8A23D", pink: "#D4709B" };
+const COLORS = { blue: "#3D8BCD", green: "#3FA796", amber: "#E8A23D", pink: "#D4709B", red: "#E8595B", purple: "#C77DD8", teal: "#2FA6B0", indigo: "#7C83DB" };
 const ALL_COLOR = "#B0A48F"; // whole-family events (warm taupe)
 const colorFor = (c) => COLORS[c] || "#8A8178";
+// avatar = emoji/initial stored in avatar_url (falls back to first letter of name)
+const avatarHTML = (m, cls = "avatar") => {
+  const a = m.avatar_url;
+  const inner = a
+    ? (/^https?:\/\//.test(a) ? `<img src="${esc(a)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(a))
+    : esc(m.name?.[0] ?? "?");
+  return `<span class="${cls}" style="background:${colorFor(m.color)}">${inner}</span>`;
+};
 const el = document.getElementById("app");
 
 // shared client-side state (loaded once per session)
@@ -108,6 +116,7 @@ async function render() {
     if (route.startsWith("#/stars")) return needMember(viewStars);
     if (route.startsWith("#/rewards")) return needMember(viewRewards);
     if (route.startsWith("#/finance")) return needMember(viewFinance);
+    if (route.startsWith("#/family")) return viewFamily();
     return viewPicker();
   } finally {
     rendering = false;
@@ -157,12 +166,14 @@ async function viewPicker() {
         <h2>Who's using Hub?</h2>
         <p class="sub">Pick your profile</p>
         <div class="grid" id="tiles"><p class="sub">Loading…</p></div>
-        <div style="text-align:center;margin-top:18px">
+        <div style="text-align:center;margin-top:18px;display:flex;gap:14px;justify-content:center">
+          <button class="link" id="manage">⚙ Manage family</button>
           <button class="link" id="signout">Sign out</button>
         </div>
       </div>
     </div>`;
   document.getElementById("signout").onclick = signOut;
+  document.getElementById("manage").onclick = () => go("#/family");
 
   const { data, error } = await supabase
     .from("family_members")
@@ -178,12 +189,111 @@ async function viewPicker() {
     const b = document.createElement("button");
     b.className = "tile";
     b.innerHTML = `
-      <span class="avatar" style="background:${colorFor(m.color)}">${esc(m.name[0] ?? "?")}</span>
+      ${avatarHTML(m)}
       <span>${esc(m.name)}</span>
-      <span class="role">${m.is_child ? "Kid" : "Parent"} · ${esc(m.color)}</span>`;
-    b.onclick = () => { setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child }); go("#/home"); };
+      <span class="role">${m.is_child ? "Kid" : "Parent"}</span>`;
+    b.onclick = () => { setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child, avatar_url: m.avatar_url }); go("#/home"); };
     tiles.appendChild(b);
   }
+}
+
+// ---- view: family / member management (edit names, colors, avatars) --------
+const updateMember = (id, p) => supabase.from("family_members").update(p).eq("id", id).select().single();
+const createMember = (p) => supabase.from("family_members").insert({ family_id: state.familyId, star_balance: 0, ...p }).select().single();
+
+async function viewFamily() {
+  await loadContext();
+  el.innerHTML = `
+    <header class="topbar">
+      <button class="iconbtn" id="back" title="Back">‹</button>
+      <h1>Family members</h1>
+      <button id="addMember">+ Add</button>
+    </header>
+    <section class="content">
+      <p class="sub" style="text-align:left;margin:0 0 16px">Edit names, colours and avatars. Changes show up everywhere.</p>
+      <div id="memlist"></div>
+      <div class="row"><button class="link" id="toPicker">← Back to profiles</button></div>
+    </section>`;
+  document.getElementById("back").onclick = () => go("#/picker");
+  document.getElementById("toPicker").onclick = () => go("#/picker");
+  document.getElementById("addMember").onclick = () => openMemberForm(null);
+
+  const list = document.getElementById("memlist");
+  list.innerHTML = state.members.map((m) => `
+    <div class="memrow">
+      ${avatarHTML(m, "avatar sm")}
+      <div class="meminfo">
+        <div class="mn">${esc(m.name)}</div>
+        <div class="mr">${m.is_child ? "Kid" : "Parent"} · <span class="dot" style="background:${colorFor(m.color)};width:9px;height:9px"></span> ${esc(m.color)}</div>
+      </div>
+      <button class="ghost meminfo-edit" data-id="${m.id}">Edit</button>
+    </div>`).join("") || `<p class="sub">No members yet.</p>`;
+  list.querySelectorAll(".meminfo-edit").forEach((b) => {
+    b.onclick = () => openMemberForm(state.members.find((m) => m.id === b.dataset.id));
+  });
+}
+
+function openMemberForm(member) {
+  const isEdit = !!member;
+  const cur = member || { name: "", color: "blue", is_child: false, avatar_url: "" };
+  const swatches = Object.entries(COLORS).map(([name, hex]) =>
+    `<button type="button" class="swatch${name === cur.color ? " sel" : ""}" data-c="${name}" style="background:${hex}" title="${name}"></button>`).join("");
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <form class="modal" id="memForm">
+      <div class="modal-top">
+        <button type="button" class="iconbtn" id="mClose">✕</button>
+        <strong>${isEdit ? "Edit member" : "New member"}</strong>
+        <button type="submit" id="mSave">Save</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex;justify-content:center;margin:6px 0 4px" id="mPreview">${avatarHTML(cur, "avatar")}</div>
+        <label>Name</label>
+        <input id="m_name" required value="${esc(cur.name)}" placeholder="Sam" />
+        <label>Colour</label>
+        <div class="swatchrow" id="m_colors">${swatches}</div>
+        <label>Avatar (emoji or a single letter)</label>
+        <input id="m_avatar" maxlength="8" value="${esc(cur.avatar_url || "")}" placeholder="🙂 (leave blank for initials)" />
+        <label class="inline"><input type="checkbox" id="m_child" ${cur.is_child ? "checked" : ""} /> This member is a kid</label>
+        <div class="err" id="mErr"></div>
+      </div>
+    </form>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("mClose").onclick = close;
+
+  let chosen = cur.color;
+  const preview = () => { document.getElementById("mPreview").innerHTML = avatarHTML({ color: chosen, avatar_url: document.getElementById("m_avatar").value, name: document.getElementById("m_name").value }, "avatar"); };
+  overlay.querySelectorAll(".swatch").forEach((s) => {
+    s.onclick = () => { chosen = s.dataset.c; overlay.querySelectorAll(".swatch").forEach((x) => x.classList.toggle("sel", x === s)); preview(); };
+  });
+  document.getElementById("m_avatar").addEventListener("input", preview);
+  document.getElementById("m_name").addEventListener("input", preview);
+
+  document.getElementById("memForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("mErr"); err.textContent = "";
+    const name = document.getElementById("m_name").value.trim();
+    if (!name) { err.textContent = "Name is required."; return; }
+    const payload = {
+      name, color: chosen, is_child: document.getElementById("m_child").checked,
+      avatar_url: document.getElementById("m_avatar").value.trim() || null,
+    };
+    const save = document.getElementById("mSave"); save.disabled = true; save.textContent = "Saving…";
+    let res;
+    if (isEdit) res = await updateMember(member.id, payload);
+    else res = await createMember({ ...payload, sort_order: state.members.length });
+    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    // if the edited member is the one we're acting as, refresh the cached identity
+    const cm = getMember();
+    if (cm && isEdit && cm.id === member.id) setMember({ ...cm, name: payload.name, color: payload.color, is_child: payload.is_child, avatar_url: payload.avatar_url });
+    state.members = null; // bust context cache so avatars/colours reload
+    close();
+    viewFamily();
+  });
 }
 
 // ---- data layer (all reads/writes go through RLS) --------------------------
@@ -191,7 +301,7 @@ async function loadContext() {
   if (state.familyId && state.members) return;
   const { data: fam } = await supabase.from("families").select("id").limit(1).maybeSingle();
   state.familyId = fam?.id ?? null;
-  const { data: mem } = await supabase.from("family_members").select("id,name,color,is_child").order("sort_order");
+  const { data: mem } = await supabase.from("family_members").select("id,name,color,is_child,avatar_url,sort_order").order("sort_order");
   state.members = mem || [];
   state.membersById = Object.fromEntries(state.members.map((m) => [m.id, m]));
 }
