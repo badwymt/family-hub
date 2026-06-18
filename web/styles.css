@@ -298,15 +298,16 @@ button.finrow:hover{ border-color:var(--accent); }
 .alldaystrip .lbl{ font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
 .adchip{ font-size:12px; color:#fff; padding:3px 10px; border-radius:999px; font-weight:600; cursor:pointer; }
 
-.daygrid{ position:relative; background:var(--panel); border:1px solid var(--line);
-  border-radius:14px; overflow:hidden; box-shadow:var(--shadow); }
+.dayscroll{ max-height:calc(100dvh - 340px); min-height:240px; overflow-y:auto;
+  border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); background:var(--panel); }
+.daygrid{ position:relative; background:var(--panel); }
 .hourrow{ display:flex; height:56px; border-top:1px solid var(--line); }
 .hourrow:first-child{ border-top:none; }
 .hourlbl{ width:60px; flex:none; font-size:11px; color:var(--muted); padding:4px 8px; font-variant-numeric:tabular-nums; }
 .hourslot{ flex:1; position:relative; cursor:pointer; }
 .hourslot:hover::after{ content:'+'; position:absolute; left:8px; top:4px; color:var(--muted); font-weight:700; }
 .evlayer{ position:absolute; top:0; left:60px; right:0; bottom:0; pointer-events:none; }
-.evblock{ position:absolute; left:8px; right:8px; border-radius:9px; padding:6px 9px; color:#fff;
+.evblock{ position:absolute; border-radius:9px; padding:6px 9px; color:#fff;
   pointer-events:auto; cursor:pointer; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.14); }
 .evblock .bt{ font-weight:700; font-size:12px; line-height:1.25; }
 .evblock .btime{ font-size:11px; opacity:.92; font-variant-numeric:tabular-nums; }
@@ -387,6 +388,18 @@ button.finrow:hover{ border-color:var(--accent); }
 .plandh{ font-weight:700; font-size:13px; }
 .plandh.today{ color:var(--accent); }
 .mealrow{ display:flex; align-items:center; gap:8px; margin-top:6px; }
+
+/* ---- end-time vs duration toggle + compact modal ---- */
+.endmode{ display:flex; gap:6px; margin:4px 0 8px; }
+.endmode button{ flex:1; padding:8px; border-radius:9px; border:1px solid var(--line);
+  background:var(--panel); color:var(--muted); font-weight:600; }
+.endmode button.on{ background:var(--accent); color:#fff; border-color:var(--accent); }
+.modal-body label{ margin-top:10px; }
+.modal-body input:not([type=checkbox]):not([type=radio]), .modal-body select, .modal-body textarea{ padding:9px 12px; }
+.recur{ margin-top:12px; padding-top:6px; }
+.notes{ margin-top:12px; padding-top:6px; }
+.rrule-preview{ margin:8px 0 0; }
+.modal-foot{ padding:12px 16px; }
 
 /* ---- M7b: offline pending marker ---- */
 .pendmark{ font-size:12px; opacity:.85; }

@@ -329,19 +329,24 @@ function assembleRule({ freq, interval, byday }, untilStamp, count) {
 }
 const buildRuleString = (ui) => {
   if (ui.freq === "none") return null;
+  if (ui.freq !== "custom") return assembleRule({ freq: ui.freq, interval: 1, byday: [] });
   const until = ui.endType === "until" && ui.until ? toRRuleUntil(ui.until) : null;
   const count = ui.endType === "count" && ui.count ? parseInt(ui.count, 10) : null;
-  return assembleRule({ freq: ui.freq, interval: ui.interval, byday: ui.byday }, until, count);
+  return assembleRule({ freq: ui.custFreq || "WEEKLY", interval: ui.interval, byday: ui.byday }, until, count);
 };
 function parseRuleToUI(ruleStr) {
-  const ui = { freq: "none", interval: 1, byday: [], endType: "never", until: "", count: "" };
+  const ui = { freq: "none", custFreq: "WEEKLY", interval: 1, byday: [], endType: "never", until: "", count: "" };
   if (!ruleStr) return ui;
   const o = RRule.parseString(ruleStr);
-  ui.freq = FREQ_NAME[o.freq] || "none";
-  ui.interval = o.interval || 1;
-  if (o.byweekday) ui.byday = [].concat(o.byweekday).map((w) => WEEKDAYS[typeof w === "number" ? w : w.weekday]);
-  if (o.until) { ui.endType = "until"; ui.until = toDateInput(o.until.toISOString()); }
-  else if (o.count) { ui.endType = "count"; ui.count = o.count; }
+  const fname = FREQ_NAME[o.freq] || "WEEKLY";
+  const interval = o.interval || 1;
+  const byday = o.byweekday ? [].concat(o.byweekday).map((w) => WEEKDAYS[typeof w === "number" ? w : w.weekday]) : [];
+  let endType = "never", until = "", count = "";
+  if (o.until) { endType = "until"; until = toDateInput(o.until.toISOString()); }
+  else if (o.count) { endType = "count"; count = o.count; }
+  // a simple every-1, no-byday, no-end rule maps to a preset; anything else is "custom"
+  if (interval === 1 && byday.length === 0 && endType === "never") { ui.freq = fname; }
+  else { ui.freq = "custom"; ui.custFreq = fname; ui.interval = interval; ui.byday = byday; ui.endType = endType; ui.until = until; ui.count = count; }
   return ui;
 }
 const withUntil = (ruleStr, capDate) => assembleRule(ruleParts(ruleStr), dateToUntil(capDate));
@@ -589,14 +594,14 @@ function renderDayBody(body, byDay, instances, mealsByDay) {
   const allday = dayInsts.filter((i) => i.all_day);
   const dayMeals = (mealsByDay && mealsByDay[dayKey]) || [];
 
+  // window: start at the earlier of the day's first event or 9am; else 9am–11pm
   let startH, endH;
   if (timed.length) {
     const starts = timed.map((i) => hourFloat(i.starts_at));
     const ends = timed.map((i) => (i.ends_at ? hourFloat(i.ends_at) : hourFloat(i.starts_at) + 1));
-    startH = Math.max(0, Math.floor(Math.min(...starts)));
+    startH = Math.max(0, Math.min(9, Math.floor(Math.min(...starts))));
     endH = Math.min(24, Math.max(23, Math.ceil(Math.max(...ends))));
-    if (startH >= endH) startH = Math.max(0, endH - 1);
-  } else { startH = 6; endH = 23; }
+  } else { startH = 9; endH = 23; }
 
   let rows = "";
   for (let h = startH; h < endH; h++) {
@@ -604,25 +609,42 @@ function renderDayBody(body, byDay, instances, mealsByDay) {
     rows += `<div class="hourrow"><span class="hourlbl">${hr} ${ap}</span><div class="hourslot" data-h="${h}"></div></div>`;
   }
 
-  const blocks = timed.slice().sort((a, b) => a.starts_at.localeCompare(b.starts_at)).map((inst) => {
+  // lay overlapping events into side-by-side columns
+  timed.forEach((e) => { e._s = hourFloat(e.starts_at); e._e = e.ends_at ? hourFloat(e.ends_at) : e._s + 1; });
+  const layout = (cl) => {
+    const colEnds = [];
+    cl.forEach((e) => {
+      let c = 0; for (; c < colEnds.length; c++) { if (e._s >= colEnds[c] - 0.0001) break; }
+      e._col = c; colEnds[c] = e._e;
+    });
+    cl.forEach((e) => (e._cols = colEnds.length));
+  };
+  let cluster = [], clusterEnd = -1;
+  timed.forEach((e) => {
+    if (cluster.length && e._s >= clusterEnd - 0.0001) { layout(cluster); cluster = []; clusterEnd = -1; }
+    cluster.push(e); clusterEnd = Math.max(clusterEnd, e._e);
+  });
+  if (cluster.length) layout(cluster);
+
+  const blocks = timed.map((inst) => {
     const m = inst.member_id ? state.membersById[inst.member_id] : null;
     const col = m ? colorFor(m.color) : ALL_COLOR;
-    const s = hourFloat(inst.starts_at);
-    const e = inst.ends_at ? hourFloat(inst.ends_at) : s + 1;
-    const top = (s - startH) * HOURPX + 2;
-    const height = Math.max(24, (e - s) * HOURPX - 4);
+    const top = (inst._s - startH) * HOURPX + 2;
+    const height = Math.max(22, (inst._e - inst._s) * HOURPX - 4);
+    const cols = inst._cols || 1, ci = inst._col || 0;
+    const leftPct = (ci / cols) * 100, widPct = (1 / cols) * 100;
     const rep = inst.isRecurring ? " 🔁" : "";
     const tm = `${fmtTime(inst.starts_at)}${inst.ends_at ? "–" + fmtTime(inst.ends_at) : ""}`;
     const glyph = m ? (m.avatar_url && !/^https?:\/\//.test(m.avatar_url) ? esc(m.avatar_url) : esc((m.name[0] || "?"))) : "";
-    const badge = m ? `<span class="bav">${glyph}</span>` : "";
-    return `<div class="evblock" data-iid="${esc(inst.iid)}" style="top:${top}px;height:${height}px;background:${col}">
+    const badge = (m && cols < 2) ? `<span class="bav">${glyph}</span>` : "";
+    return `<div class="evblock" data-iid="${esc(inst.iid)}" style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 3px);width:calc(${widPct}% - 6px);background:${col}">
       <div class="bt">${esc(inst.title)}${rep}</div><div class="btime">${tm}</div>${badge}</div>`;
   }).join("");
 
   let nowLine = "";
   if (dayKey === dateKey(new Date())) {
     const nowH = hourFloat(new Date().toISOString());
-    if (nowH >= startH && nowH <= endH) nowLine = `<div class="nowline" id="nowline" style="top:${(nowH - startH) * HOURPX}px"></div>`;
+    if (nowH >= startH && nowH <= endH) nowLine = `<div class="nowline" style="top:${(nowH - startH) * HOURPX}px"></div>`;
   }
 
   body.innerHTML = `
@@ -632,14 +654,13 @@ function renderDayBody(body, byDay, instances, mealsByDay) {
       const m = i.member_id ? state.membersById[i.member_id] : null; const col = m ? colorFor(m.color) : ALL_COLOR;
       return `<span class="adchip" data-iid="${esc(i.iid)}" style="background:${col}">${esc(i.title)}</span>`;
     }).join("")}</div>` : ""}
-    <div class="daygrid">${rows}<div class="evlayer">${blocks}${nowLine}</div></div>`;
+    <div class="dayscroll"><div class="daygrid">${rows}<div class="evlayer">${blocks}${nowLine}</div></div></div>`;
 
   body.querySelectorAll(".evblock,.adchip").forEach((b) => {
     b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
   });
   body.querySelectorAll(".mealchip").forEach((c) => { c.onclick = () => go("#/meals"); });
   body.querySelectorAll(".hourslot").forEach((s) => { s.onclick = () => openEventForm(null, dayKey); });
-  const nl = document.getElementById("nowline"); if (nl) nl.scrollIntoView({ block: "center" });
 }
 
 // ---- week view: 7 day columns with event chips -----------------------------
@@ -695,20 +716,20 @@ function renderMonthBody(body, weeks, byDay, todayKey) {
 
 // ---- shared recurrence editor (used by event + task forms) -----------------
 function recurSectionHTML(rui) {
+  const cf = rui.custFreq || "WEEKLY";
   const wdBtns = WEEKDAYS.map((d, i) => `<button type="button" class="wd${rui.byday.includes(d) ? " on" : ""}" data-d="${d}">${["M","T","W","T","F","S","S"][i]}</button>`).join("");
+  const opt = (v, l) => `<option value="${v}"${rui.freq === v ? " selected" : ""}>${l}</option>`;
+  const copt = (v, l) => `<option value="${v}"${cf === v ? " selected" : ""}>${l}</option>`;
   return `<div class="recur" id="recurBox">
     <label>Repeat</label>
     <select id="r_freq">
-      <option value="none"${rui.freq === "none" ? " selected" : ""}>Does not repeat</option>
-      <option value="DAILY"${rui.freq === "DAILY" ? " selected" : ""}>Daily</option>
-      <option value="WEEKLY"${rui.freq === "WEEKLY" ? " selected" : ""}>Weekly</option>
-      <option value="MONTHLY"${rui.freq === "MONTHLY" ? " selected" : ""}>Monthly</option>
-      <option value="YEARLY"${rui.freq === "YEARLY" ? " selected" : ""}>Yearly</option>
+      ${opt("none", "Does not repeat")}${opt("DAILY", "Daily")}${opt("WEEKLY", "Weekly")}${opt("MONTHLY", "Monthly")}${opt("YEARLY", "Yearly")}${opt("custom", "Custom…")}
     </select>
-    <div id="r_opts" style="${rui.freq === "none" ? "display:none" : ""}">
-      <label>Every</label>
-      <div class="r_row"><input id="r_interval" type="number" min="1" value="${rui.interval}" /> <span id="r_unit">${FREQ_UNIT[rui.freq] || "week(s)"}</span></div>
-      <div id="r_bydayrow" style="${rui.freq === "WEEKLY" ? "" : "display:none"}">
+    <div id="r_opts" style="${rui.freq === "custom" ? "" : "display:none"}">
+      <label>Repeat every</label>
+      <div class="r_row"><input id="r_interval" type="number" min="1" value="${rui.interval}" />
+        <select id="r_custfreq">${copt("DAILY", "day(s)")}${copt("WEEKLY", "week(s)")}${copt("MONTHLY", "month(s)")}${copt("YEARLY", "year(s)")}</select></div>
+      <div id="r_bydayrow" style="${rui.freq === "custom" && cf === "WEEKLY" ? "" : "display:none"}">
         <label>On</label><div class="wdrow" id="r_byday">${wdBtns}</div>
       </div>
       <label>Ends</label>
@@ -725,22 +746,23 @@ function wireRecur(overlay) {
   const q = (id) => overlay.querySelector("#" + id);
   const read = () => ({
     freq: q("r_freq").value,
-    interval: Math.max(1, parseInt(q("r_interval").value || "1", 10)),
+    custFreq: q("r_custfreq") ? q("r_custfreq").value : "WEEKLY",
+    interval: Math.max(1, parseInt((q("r_interval") || {}).value || "1", 10)),
     byday: [...overlay.querySelectorAll("#r_byday .wd.on")].map((b) => b.dataset.d),
     endType: (overlay.querySelector('input[name="r_end"]:checked') || {}).value || "never",
-    until: q("r_until").value,
-    count: q("r_count").value,
+    until: (q("r_until") || {}).value || "",
+    count: (q("r_count") || {}).value || "",
   });
   const refresh = () => {
     const ui = read();
-    q("r_opts").style.display = ui.freq === "none" ? "none" : "";
-    q("r_bydayrow").style.display = ui.freq === "WEEKLY" ? "" : "none";
-    q("r_unit").textContent = FREQ_UNIT[ui.freq] || "";
+    q("r_opts").style.display = ui.freq === "custom" ? "" : "none";
+    q("r_bydayrow").style.display = (ui.freq === "custom" && ui.custFreq === "WEEKLY") ? "" : "none";
     q("r_preview").textContent = buildRuleString(ui) || "Does not repeat";
   };
   q("r_freq").onchange = refresh;
+  if (q("r_custfreq")) q("r_custfreq").onchange = refresh;
   overlay.querySelectorAll("#r_byday .wd").forEach((b) => { b.onclick = () => { b.classList.toggle("on"); refresh(); }; });
-  ["r_interval", "r_until", "r_count"].forEach((id) => q(id).addEventListener("input", refresh));
+  ["r_interval", "r_until", "r_count"].forEach((id) => { const e = q(id); if (e) e.addEventListener("input", refresh); });
   overlay.querySelectorAll('input[name="r_end"]').forEach((r) => r.addEventListener("change", refresh));
   refresh();
   return { read, refresh };
@@ -787,7 +809,13 @@ function openEventForm(inst, presetDayKey) {
         <label class="inline"><input type="checkbox" id="f_allday" /> All day</label>
         <div id="timed">
           <label>Start</label><input id="f_start" type="datetime-local" />
-          <label>End</label><input id="f_end" type="datetime-local" />
+          <label>Ends</label>
+          <div class="endmode"><button type="button" id="endTimeBtn" class="on">At time</button><button type="button" id="endDurBtn">Duration</button></div>
+          <div id="endTimeWrap"><input id="f_end" type="datetime-local" /></div>
+          <div id="endDurWrap" style="display:none"><select id="f_dur">
+            <option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option>
+            <option value="60" selected>1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option>
+            <option value="180">3 hours</option><option value="240">4 hours</option></select></div>
         </div>
         <div id="allday" style="display:none">
           <label>Date</label><input id="f_date" type="date" />
@@ -840,6 +868,18 @@ function openEventForm(inst, presetDayKey) {
     $("allday").style.display = allDayCb.checked ? "" : "none";
   };
 
+  // ----- end: pick an end time, or a duration -----
+  let endMode = "time";
+  const setEndMode = (m) => {
+    endMode = m;
+    $("endTimeBtn").classList.toggle("on", m === "time");
+    $("endDurBtn").classList.toggle("on", m === "dur");
+    $("endTimeWrap").style.display = m === "time" ? "" : "none";
+    $("endDurWrap").style.display = m === "dur" ? "" : "none";
+  };
+  $("endTimeBtn").onclick = () => setEndMode("time");
+  $("endDurBtn").onclick = () => setEndMode("dur");
+
   // ----- recurrence editor (shared helper) -----
   const recurBox = $("recurBox");
   const readRecur = wireRecur(overlay).read;
@@ -875,9 +915,14 @@ function openEventForm(inst, presetDayKey) {
       const sv = $("f_start").value;
       if (!sv) return { err: "Pick a start time." };
       starts_at = new Date(sv).toISOString();
-      const evv = $("f_end").value;
-      ends_at = evv ? new Date(evv).toISOString() : null;
-      if (ends_at && ends_at < starts_at) return { err: "End is before start." };
+      if (endMode === "dur") {
+        const mins = parseInt($("f_dur").value, 10) || 60;
+        ends_at = new Date(new Date(sv).getTime() + mins * 60000).toISOString();
+      } else {
+        const evv = $("f_end").value;
+        ends_at = evv ? new Date(evv).toISOString() : null;
+        if (ends_at && ends_at < starts_at) return { err: "End is before start." };
+      }
     }
     return { title, member_id, location, starts_at, ends_at, all_day: isAllDay };
   }
