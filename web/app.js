@@ -479,7 +479,7 @@ async function viewCalendar() {
   if (!state.calMode) state.calMode = "individual";
   if (!state.hiddenMembers) state.hiddenMembers = new Set();
   await renderCalendar();
-  subscribeRealtime(["events", "event_overrides", "event_notes", "meals"], () => renderCalendar());
+  subscribeRealtime(["events", "event_overrides", "event_notes", "meals", "tasks", "task_completions"], () => renderCalendar());
 }
 
 function shiftCal(dir) {
@@ -533,6 +533,17 @@ async function renderCalendar() {
     for (const m of (mr.data || [])) (mealsByDay[m.day] = mealsByDay[m.day] || []).push(m);
   } catch (e) {}
 
+  // calendar tasks (kind='task') overlaid by due date; overdue rolled onto today
+  let taskCellsByDay = {}, overdue = [];
+  try {
+    const tr = await fetchTasks();
+    const allT = (tr.data || []).filter((t) => t.kind === "task");
+    const dmap = await fetchDoneMap(allT.map((t) => t.id));
+    for (const c of taskCells(allT, dmap, winStart, winEnd)) (taskCellsByDay[c.dueKey] = taskCellsByDay[c.dueKey] || []).push(c);
+    overdue = overdueCells(allT, dmap, todayKey);
+  } catch (e) {}
+  if (view === "tasks") headerLabel = "Tasks";
+
   const vseg = (v, label) => `<button class="seg${view === v ? " on" : ""}" data-v="${v}">${label}</button>`;
   el.innerHTML = `
     <header class="topbar">
@@ -542,7 +553,7 @@ async function renderCalendar() {
     </header>
     <section class="content">
       ${navTabs("home")}
-      <div class="viewseg">${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}</div>
+      <div class="viewseg">${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}${vseg("tasks", "Tasks")}</div>
       <div class="chips memberchips">${state.members.map((m) => `
         <button class="chip mchip${state.hiddenMembers.has(m.id) ? "" : " on"}" data-m="${m.id}">
           ${avatarHTML(m, "favatar")}${esc(m.name)}
@@ -561,8 +572,8 @@ async function renderCalendar() {
 
   document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
   document.getElementById("signout").onclick = signOut;
-  document.getElementById("addEvent").onclick = () => openEventForm(null, view === "month" ? null : dateKey(state.viewDay));
-  const fab = document.getElementById("fab"); if (fab) fab.onclick = () => openEventForm(null, dateKey(state.viewDay));
+  document.getElementById("addEvent").onclick = () => view === "tasks" ? openTaskItemForm(null, null, dateKey(new Date())) : openEventForm(null, view === "month" ? null : dateKey(state.viewDay));
+  const fab = document.getElementById("fab"); if (fab) fab.onclick = () => view === "tasks" ? openTaskItemForm(null, null, dateKey(new Date())) : openEventForm(null, dateKey(state.viewDay));
   el.querySelectorAll(".mchip").forEach((c) => {
     c.onclick = () => {
       const id = c.dataset.m;
@@ -581,26 +592,33 @@ async function renderCalendar() {
   };
 
   const body = document.getElementById("calbody");
-  if (view === "day") renderDayBody(body, byDay, instances, mealsByDay);
-  else if (view === "week") renderWeekBody(body, byDay, instances, mealsByDay);
-  else renderMonthBody(body, weeks, byDay, todayKey);
+  if (view === "day") renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue);
+  else if (view === "week") renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay);
+  else if (view === "tasks") renderTasksView(body);
+  else renderMonthBody(body, weeks, byDay, todayKey, taskCellsByDay);
 }
 
-// ---- day view: dynamic hour window (first event → fill, else 6am–11pm) ------
-function renderDayBody(body, byDay, instances, mealsByDay) {
+// ---- day view: events + tasks; window starts at first item or 9am ----------
+function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue) {
   const dayKey = dateKey(state.viewDay);
+  const isToday = dayKey === dateKey(new Date());
   const dayInsts = (byDay[dayKey] || []);
   const timed = dayInsts.filter((i) => !i.all_day);
   const allday = dayInsts.filter((i) => i.all_day);
   const dayMeals = (mealsByDay && mealsByDay[dayKey]) || [];
+  const dayTasks = (taskCellsByDay && taskCellsByDay[dayKey]) || [];
+  const taskHour = (c) => { const p = c.due_time.split(":"); return (+p[0]) + ((+p[1]) || 0) / 60; };
+  const timedTasks = dayTasks.filter((c) => c.due_time);
+  const dateTasks = dayTasks.filter((c) => !c.due_time);
+  const od = isToday ? (overdue || []) : [];
 
-  // window: start at the earlier of the day's first event or 9am; else 9am–11pm
+  // window: earlier of the first event/task or 9am; else 9am–11pm
+  const allStarts = timed.map((i) => hourFloat(i.starts_at)).concat(timedTasks.map(taskHour));
+  const allEnds = timed.map((i) => (i.ends_at ? hourFloat(i.ends_at) : hourFloat(i.starts_at) + 1)).concat(timedTasks.map((c) => taskHour(c) + 0.5));
   let startH, endH;
-  if (timed.length) {
-    const starts = timed.map((i) => hourFloat(i.starts_at));
-    const ends = timed.map((i) => (i.ends_at ? hourFloat(i.ends_at) : hourFloat(i.starts_at) + 1));
-    startH = Math.max(0, Math.min(9, Math.floor(Math.min(...starts))));
-    endH = Math.min(24, Math.max(23, Math.ceil(Math.max(...ends))));
+  if (allStarts.length) {
+    startH = Math.max(0, Math.min(9, Math.floor(Math.min(...allStarts))));
+    endH = Math.min(24, Math.max(23, Math.ceil(Math.max(...allEnds))));
   } else { startH = 9; endH = 23; }
 
   let rows = "";
@@ -613,17 +631,11 @@ function renderDayBody(body, byDay, instances, mealsByDay) {
   timed.forEach((e) => { e._s = hourFloat(e.starts_at); e._e = e.ends_at ? hourFloat(e.ends_at) : e._s + 1; });
   const layout = (cl) => {
     const colEnds = [];
-    cl.forEach((e) => {
-      let c = 0; for (; c < colEnds.length; c++) { if (e._s >= colEnds[c] - 0.0001) break; }
-      e._col = c; colEnds[c] = e._e;
-    });
+    cl.forEach((e) => { let c = 0; for (; c < colEnds.length; c++) { if (e._s >= colEnds[c] - 0.0001) break; } e._col = c; colEnds[c] = e._e; });
     cl.forEach((e) => (e._cols = colEnds.length));
   };
   let cluster = [], clusterEnd = -1;
-  timed.forEach((e) => {
-    if (cluster.length && e._s >= clusterEnd - 0.0001) { layout(cluster); cluster = []; clusterEnd = -1; }
-    cluster.push(e); clusterEnd = Math.max(clusterEnd, e._e);
-  });
+  timed.forEach((e) => { if (cluster.length && e._s >= clusterEnd - 0.0001) { layout(cluster); cluster = []; clusterEnd = -1; } cluster.push(e); clusterEnd = Math.max(clusterEnd, e._e); });
   if (cluster.length) layout(cluster);
 
   const blocks = timed.map((inst) => {
@@ -641,30 +653,51 @@ function renderDayBody(body, byDay, instances, mealsByDay) {
       <div class="bt">${esc(inst.title)}${rep}</div><div class="btime">${tm}</div>${badge}</div>`;
   }).join("");
 
+  const taskBlocks = timedTasks.map((c) => {
+    const m = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
+    const col = m ? colorFor(m.color) : "#8A8178";
+    const top = (taskHour(c) - startH) * HOURPX + 2;
+    return `<div class="evblock taskblock${c.done ? " done" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}" style="top:${top}px;border-left-color:${col}">
+      <span class="tck" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}">${c.done ? "✓" : ""}</span><span class="tbt">${esc(c.task.title)} · ${c.due_time.slice(0, 5)}</span></div>`;
+  }).join("");
+
   let nowLine = "";
-  if (dayKey === dateKey(new Date())) {
+  if (isToday) {
     const nowH = hourFloat(new Date().toISOString());
     if (nowH >= startH && nowH <= endH) nowLine = `<div class="nowline" style="top:${(nowH - startH) * HOURPX}px"></div>`;
   }
 
+  const taskChip = (c) => {
+    const m = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
+    const col = m ? colorFor(m.color) : "#8A8178";
+    return `<span class="taskchip${c.done ? " done" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}" style="border-left-color:${col}"><span class="tck" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}">${c.done ? "✓" : ""}</span>${esc(c.task.title)}</span>`;
+  };
+
   body.innerHTML = `
-    ${(allday.length || dayMeals.length) ? `<div class="alldaystrip"><span class="lbl">All day · meals</span>${
-      dayMeals.map((m) => `<span class="mealchip" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)} — ${esc(m.title)}</span>`).join("")
+    ${(allday.length || dayMeals.length || dateTasks.length || od.length) ? `<div class="alldaystrip"><span class="lbl">All day · tasks</span>${
+      od.length ? `<span class="overduechip" id="overdueChip">⚠ Overdue (${od.length})</span>` : ""
+    }${dayMeals.map((m) => `<span class="mealchip" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)} — ${esc(m.title)}</span>`).join("")
+    }${dateTasks.map(taskChip).join("")
     }${allday.map((i) => {
       const m = i.member_id ? state.membersById[i.member_id] : null; const col = m ? colorFor(m.color) : ALL_COLOR;
       return `<span class="adchip" data-iid="${esc(i.iid)}" style="background:${col}">${esc(i.title)}</span>`;
     }).join("")}</div>` : ""}
-    <div class="dayscroll"><div class="daygrid">${rows}<div class="evlayer">${blocks}${nowLine}</div></div></div>`;
+    <div class="dayscroll"><div class="daygrid">${rows}<div class="evlayer">${blocks}${taskBlocks}${nowLine}</div></div></div>`;
 
-  body.querySelectorAll(".evblock,.adchip").forEach((b) => {
+  body.querySelectorAll(".evblock:not(.taskblock),.adchip").forEach((b) => {
     b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
   });
   body.querySelectorAll(".mealchip").forEach((c) => { c.onclick = () => go("#/meals"); });
+  const allCells = dayTasks.concat(od);
+  const findCell = (id, occ) => allCells.find((c) => c.task.id === id && String(c.occ ?? "") === occ);
+  body.querySelectorAll(".tck").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const c = findCell(b.dataset.tid, b.dataset.occ); if (c && !c.done) { completeTaskCell(c); renderCalendar(); } }; });
+  body.querySelectorAll(".taskchip,.taskblock").forEach((b) => { b.onclick = () => { const c = findCell(b.dataset.tid, b.dataset.occ); if (c) openTaskItemForm(c.task, c.occ ?? null); }; });
+  const oc = document.getElementById("overdueChip"); if (oc) oc.onclick = () => { state.calView = "tasks"; renderCalendar(); };
   body.querySelectorAll(".hourslot").forEach((s) => { s.onclick = () => openEventForm(null, dayKey); });
 }
 
 // ---- week view: 7 day columns with event chips -----------------------------
-function renderWeekBody(body, byDay, instances, mealsByDay) {
+function renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay) {
   const ws = startOfWeek(state.viewDay);
   const todayKey = dateKey(new Date());
   let cols = "";
@@ -679,11 +712,18 @@ function renderWeekBody(body, byDay, instances, mealsByDay) {
       return `<div class="wkev" data-iid="${esc(inst.iid)}" style="background:${col}">${t}${esc(inst.title)}</div>`;
     }).join("");
     const mealChips = ((mealsByDay && mealsByDay[k]) || []).map((m) => `<div class="wkev mealwk" style="background:${MEAL_COLOR}">🍴 ${esc(m.title)}</div>`).join("");
-    cols += `<div class="weekcol"><h5 class="${k === todayKey ? "today" : ""}" data-k="${k}">${WD[i]} ${d.getDate()}</h5>${chips}${mealChips}</div>`;
+    const taskChips = ((taskCellsByDay && taskCellsByDay[k]) || []).map((c) => {
+      const m = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
+      const col = m ? colorFor(m.color) : "#8A8178";
+      return `<div class="wkev wktask${c.done ? " done" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}" style="border-left-color:${col}">☑ ${esc(c.task.title)}</div>`;
+    }).join("");
+    cols += `<div class="weekcol"><h5 class="${k === todayKey ? "today" : ""}" data-k="${k}">${WD[i]} ${d.getDate()}</h5>${chips}${mealChips}${taskChips}</div>`;
   }
   body.innerHTML = `<div class="weekgrid">${cols}</div>`;
   body.querySelectorAll(".mealwk").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); go("#/meals"); }; });
-  body.querySelectorAll(".wkev:not(.mealwk)").forEach((b) => {
+  const findTask = (id, occ) => { for (const k in (taskCellsByDay || {})) { const c = taskCellsByDay[k].find((x) => x.task.id === id && String(x.occ ?? "") === occ); if (c) return c; } return null; };
+  body.querySelectorAll(".wktask").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const c = findTask(b.dataset.tid, b.dataset.occ); if (c) openTaskItemForm(c.task, c.occ ?? null); }; });
+  body.querySelectorAll(".wkev:not(.mealwk):not(.wktask)").forEach((b) => {
     b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
   });
   body.querySelectorAll(".weekcol h5").forEach((h) => {
@@ -692,7 +732,7 @@ function renderWeekBody(body, byDay, instances, mealsByDay) {
 }
 
 // ---- month view: grid of per-person dots; tap a day → day view -------------
-function renderMonthBody(body, weeks, byDay, todayKey) {
+function renderMonthBody(body, weeks, byDay, todayKey, taskCellsByDay) {
   body.innerHTML = `
     <div class="cal">
       <div class="cal-head">${WD.map((d) => `<span>${d}</span>`).join("")}</div>
@@ -704,14 +744,57 @@ function renderMonthBody(body, weeks, byDay, todayKey) {
             const col = ev.member_id ? colorFor(state.membersById[ev.member_id]?.color) : ALL_COLOR;
             return `<i class="evdot" style="background:${col}"></i>`;
           }).join("");
+          const hasTask = taskCellsByDay && taskCellsByDay[k] && taskCellsByDay[k].some((c) => !c.done);
           return `<button class="cal-cell${inMonth ? "" : " muted"}${k === todayKey ? " today" : ""}" data-key="${k}">
-            <span class="cal-num">${d.getDate()}</span><span class="cal-dots">${dots}</span></button>`;
+            <span class="cal-num">${d.getDate()}</span><span class="cal-dots">${dots}${hasTask ? `<i class="taskdot"></i>` : ""}</span></button>`;
         }).join("")}
       </div>
     </div>`;
   body.querySelectorAll(".cal-cell").forEach((c) => {
     c.onclick = () => { state.viewDay = new Date(c.dataset.key + "T00:00"); state.calView = "day"; renderCalendar(); };
   });
+}
+
+// ---- tasks list view: Overdue / Today / Upcoming / Done --------------------
+async function renderTasksView(body) {
+  const todayKey = dateKey(new Date());
+  let all = [], dmap = new Set(), err = "";
+  try { const tr = await fetchTasks(); all = (tr.data || []).filter((t) => t.kind === "task"); dmap = await fetchDoneMap(all.map((t) => t.id)); }
+  catch (e) { err = e.message || String(e); }
+  const winStart = new Date(); winStart.setHours(0, 0, 0, 0); winStart.setDate(winStart.getDate() - 60);
+  const winEnd = new Date(); winEnd.setHours(0, 0, 0, 0); winEnd.setDate(winEnd.getDate() + 120);
+  const cells = taskCells(all, dmap, winStart, winEnd);
+  const open = cells.filter((c) => !c.done);
+  const overdue = open.filter((c) => c.dueKey < todayKey).sort((a, b) => a.dueKey.localeCompare(b.dueKey));
+  const todayT = open.filter((c) => c.dueKey === todayKey);
+  const upcoming = open.filter((c) => c.dueKey > todayKey).sort((a, b) => a.dueKey.localeCompare(b.dueKey));
+  const done = cells.filter((c) => c.done).sort((a, b) => b.dueKey.localeCompare(a.dueKey)).slice(0, 20);
+
+  const row = (c) => {
+    const m = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
+    const col = m ? colorFor(m.color) : "#8A8178";
+    const who = m ? esc(m.name) : "Anyone";
+    const tm = c.due_time ? ` · ${c.due_time.slice(0, 5)}` : "";
+    return `<div class="trow${c.done ? " done" : ""}">
+      <button class="ck${c.done ? " on" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}">${c.done ? "✓" : ""}</button>
+      <button class="trmain" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}">
+        <span class="trtitle">${esc(c.task.title)}</span>
+        <span class="trmeta" style="color:${col}">${who} · ${esc(fmtDue(c.dueKey))}${tm}</span>
+      </button></div>`;
+  };
+  const section = (title, list, cls) => list.length ? `<h4 class="lbh ${cls || ""}">${title} (${list.length})</h4><div class="tasklist">${list.map(row).join("")}</div>` : "";
+
+  body.innerHTML = `
+    ${err ? `<p class="err">${esc(err)}</p>` : ""}
+    ${section("⚠ Overdue", overdue, "overdueh")}
+    ${section("Today", todayT)}
+    ${section("Upcoming", upcoming)}
+    ${section("Done", done)}
+    ${(!open.length && !done.length) ? `<p class="sub" style="text-align:center;margin-top:20px">No tasks yet — tap ＋ to add one.</p>` : ""}`;
+
+  const findCell = (id, occ) => cells.find((c) => c.task.id === id && String(c.occ ?? "") === occ);
+  body.querySelectorAll(".trow .ck").forEach((b) => { b.onclick = () => { const c = findCell(b.dataset.tid, b.dataset.occ); if (c && !c.done) { completeTaskCell(c); renderCalendar(); } }; });
+  body.querySelectorAll(".trmain").forEach((b) => { b.onclick = () => { const c = findCell(b.dataset.tid, b.dataset.occ); if (c) openTaskItemForm(c.task, c.occ ?? null); }; });
 }
 
 // ---- shared recurrence editor (used by event + task forms) -----------------
@@ -794,6 +877,7 @@ function openEventForm(inst, presetDayKey) {
         <button type="submit" id="evSave">Save</button>
       </div>
       <div class="modal-body">
+        ${!isEdit ? `<div class="endmode itemtype"><button type="button" id="evToEvent" class="on">Event</button><button type="button" id="evToTask">Task</button></div>` : ""}
         ${isEdit && isRecurring ? `<label>Apply to</label>
           <select id="ev_scope">
             <option value="this" selected>Only this occurrence</option>
@@ -842,6 +926,8 @@ function openEventForm(inst, presetDayKey) {
   const close = () => overlay.remove();
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   document.getElementById("evClose").onclick = close;
+  const evToTask = document.getElementById("evToTask");
+  if (evToTask) evToTask.onclick = () => { close(); openTaskItemForm(null, null, presetDayKey || dateKey(state.viewDay || new Date())); };
 
   const $ = (id) => document.getElementById(id);
   const allDayCb = $("f_allday");
@@ -995,9 +1081,119 @@ async function loadNotes(eventId) {
   }).join("");
 }
 
+// ---- calendar tasks (kind='task'): due-date items shown on the calendar -----
+function taskCells(tasks, doneMap, winStart, winEnd) {
+  const out = [];
+  for (const t of tasks) {
+    const occs = t.rrule ? taskOccurrences(t, winStart, winEnd) : (t.due_date ? [null] : []);
+    for (const occ of occs) {
+      const dueKey = occ ?? t.due_date;
+      if (!dueKey) continue;
+      const dt = new Date(dueKey + "T00:00");
+      if (dt < winStart || dt >= winEnd) continue;
+      const cell = `${t.id}|${occ ?? ""}`;
+      out.push({ task: t, dueKey, occ, due_time: t.due_time, done: doneMap.has(cell) || (state.pending && state.pending.has(cell)) });
+    }
+  }
+  return out;
+}
+function overdueCells(tasks, doneMap, todayKey) {
+  const lookback = new Date(); lookback.setHours(0, 0, 0, 0); lookback.setDate(lookback.getDate() - 60);
+  const today = new Date(todayKey + "T00:00");
+  const out = [];
+  for (const t of tasks) {
+    const occs = t.rrule ? taskOccurrences(t, lookback, today) : (t.due_date && t.due_date < todayKey ? [null] : []);
+    for (const occ of occs) {
+      const dueKey = occ ?? t.due_date;
+      if (!dueKey || dueKey >= todayKey) continue;
+      const cell = `${t.id}|${occ ?? ""}`;
+      if (doneMap.has(cell) || (state.pending && state.pending.has(cell))) continue;
+      out.push({ task: t, dueKey, occ, due_time: t.due_time, done: false });
+    }
+  }
+  return out;
+}
+const completeTaskCell = (c) => { enqueueCompletion(c.task, c.occ ?? null, c.task.assigned_to || state.member.id); flushQueue(); };
+
+// Add / edit a calendar task (kind='task')
+function openTaskItemForm(task, occKey, presetDayKey) {
+  const isEdit = !!task;
+  const dayKey = (task && task.due_date) || presetDayKey || dateKey(state.viewDay || new Date());
+  const rui = parseRuleToUI(task ? task.rrule : null);
+  const whoVal = task ? (task.assigned_to || "") : "";
+  const memberOpts = `<option value="">Anyone</option>` +
+    state.members.map((m) => `<option value="${m.id}"${whoVal === m.id ? " selected" : ""}>${esc(m.name)}</option>`).join("");
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <form class="modal" id="tiForm">
+      <div class="modal-top">
+        <button type="button" class="iconbtn" id="tiClose">✕</button>
+        <strong>${isEdit ? "Edit Task" : "New Task"}</strong>
+        <button type="submit" id="tiSave">Save</button>
+      </div>
+      <div class="modal-body">
+        ${!isEdit ? `<div class="endmode itemtype"><button type="button" id="tiToEvent">Event</button><button type="button" id="tiToTask" class="on">Task</button></div>` : ""}
+        <label>Title</label>
+        <input id="ti_title" required value="${esc(task ? task.title : "")}" placeholder="Renew passport" />
+        <label>Assign to</label>
+        <select id="ti_who">${memberOpts}</select>
+        <label>Due date</label>
+        <input id="ti_date" type="date" value="${esc((task && task.due_date) || dayKey)}" />
+        <label>Due time (optional)</label>
+        <input id="ti_time" type="time" value="${esc(task && task.due_time ? task.due_time.slice(0, 5) : "")}" />
+        <label>Notes</label>
+        <textarea id="ti_desc" rows="2" placeholder="Optional">${esc(task ? (task.description || "") : "")}</textarea>
+        ${recurSectionHTML(rui)}
+        <div class="err" id="tiErr"></div>
+      </div>
+      ${isEdit ? `<div class="modal-foot"><button type="button" id="tiDone">✓ Mark done</button><button type="button" id="tiDelete" class="danger">Delete task</button></div>` : ""}
+    </form>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("tiClose").onclick = close;
+  if (!isEdit) document.getElementById("tiToEvent").onclick = () => { close(); openEventForm(null, dayKey); };
+  const readRecur = wireRecur(overlay).read;
+
+  document.getElementById("tiForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("tiErr"); err.textContent = "";
+    const title = document.getElementById("ti_title").value.trim();
+    if (!title) { err.textContent = "Title is required."; return; }
+    const due_date = document.getElementById("ti_date").value || null;
+    if (!due_date) { err.textContent = "Pick a due date."; return; }
+    const payload = {
+      title,
+      assigned_to: document.getElementById("ti_who").value || null,
+      description: document.getElementById("ti_desc").value.trim() || null,
+      due_date,
+      due_time: document.getElementById("ti_time").value || null,
+      rrule: buildRuleString(readRecur()),
+      kind: "task", star_reward: 0,
+    };
+    const save = document.getElementById("tiSave"); save.disabled = true; save.textContent = "Saving…";
+    const res = isEdit ? await updateTask(task.id, payload) : await createTask(payload);
+    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    close(); renderCalendar();
+  });
+  if (isEdit) {
+    document.getElementById("tiDone").onclick = () => {
+      enqueueCompletion(task, occKey ?? null, task.assigned_to || state.member.id);
+      close(); renderCalendar(); flushQueue();
+    };
+    document.getElementById("tiDelete").onclick = async () => {
+      if (!confirm("Delete this task?")) return;
+      const { error } = await deleteTask(task.id);
+      if (error) { document.getElementById("tiErr").textContent = error.message; return; }
+      close(); renderCalendar();
+    };
+  }
+}
+
 // ---- tasks / chores data layer (M3 one-off + M4 recurrence; no stars yet) --
 const fetchTasks = () => supabase.from("tasks")
-  .select("id,title,description,assigned_to,star_reward,due_date,rrule,exdates,is_active")
+  .select("id,title,description,assigned_to,star_reward,due_date,due_time,kind,rrule,exdates,is_active")
   .eq("is_active", true)
   .order("due_date", { ascending: true, nullsFirst: false })
   .order("created_at", { ascending: true });
@@ -1072,7 +1268,7 @@ async function renderChoreHome() {
   const ws = new Date(); ws.setHours(0, 0, 0, 0); const we = new Date(ws); we.setDate(we.getDate() + 1);
   let tasks = [], doneMap = new Set(), board = [], err = "";
   try {
-    const r = await fetchTasks(); if (r.error) throw r.error; tasks = r.data || [];
+    const r = await fetchTasks(); if (r.error) throw r.error; tasks = (r.data || []).filter((t) => t.kind !== "task");
     doneMap = await fetchDoneMap(tasks.map((t) => t.id));
     const b = await fetchLeaderboard(); if (b.error) throw b.error; board = b.data || [];
   } catch (e) { err = e.message || String(e); }
@@ -1123,7 +1319,7 @@ async function renderChoreMember() {
 
   let tasks = [], doneMap = new Set(), board = [], rewards = [], reds = [], err = "";
   try {
-    const r = await fetchTasks(); if (r.error) throw r.error; tasks = (r.data || []).filter((t) => t.assigned_to === mid);
+    const r = await fetchTasks(); if (r.error) throw r.error; tasks = (r.data || []).filter((t) => t.assigned_to === mid && t.kind !== "task");
     doneMap = await fetchDoneMap(tasks.map((t) => t.id));
     const [bd, rw, rd] = await Promise.all([fetchLeaderboard(), fetchRewards(), fetchRedemptions(mid)]);
     if (bd.error) throw bd.error; if (rw.error) throw rw.error; if (rd.error) throw rd.error;
