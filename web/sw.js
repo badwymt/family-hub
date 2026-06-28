@@ -3,7 +3,7 @@
 // - LIB_CACHE:   cross-origin ES modules (esm.sh) cached on first load.
 // - DATA_CACHE:  Supabase REST GETs (network-first, cache fallback) = offline reads.
 // Writes (POST/PATCH/RPC) and the realtime socket are never cached.
-const VERSION = "v17";
+const VERSION = "v18";
 const SHELL_CACHE = "family-hub-shell-" + VERSION;
 const LIB_CACHE = "family-hub-libs-" + VERSION;
 const DATA_CACHE = "family-hub-data-" + VERSION;
@@ -28,6 +28,28 @@ self.addEventListener("activate", (e) => {
       .then((keys) => Promise.all(keys.filter((k) => !keep.has(k)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+// Web-push: show the reminder, and focus/open the app on tap.
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = {}; }
+  const title = d.title || "Family Hub";
+  e.waitUntil(self.registration.showNotification(title, {
+    body: d.body || "",
+    data: { url: d.url || "./" },
+    icon: "./icons/icon-192.png",
+    badge: "./icons/icon-192.png",
+    tag: d.tag || undefined,
+  }));
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cls) => {
+    for (const c of cls) { if ("focus" in c) { try { c.postMessage({ type: "navigate", url }); } catch (_) {} return c.focus(); } }
+    if (self.clients.openWindow) return self.clients.openWindow(url);
+  }));
 });
 
 self.addEventListener("fetch", (e) => {

@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { RRule } from "https://esm.sh/rrule@2.8.1";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, SHARED_EMAIL } from "./config.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, SHARED_EMAIL, VAPID_PUBLIC_KEY } from "./config.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const MEMBER_KEY = "fh_current_member";
@@ -98,6 +98,43 @@ async function flushQueue() {
   }
 }
 window.addEventListener("online", flushQueue);
+
+// ---- web-push reminders (subscribe this device) ----------------------------
+function urlB64ToUint8Array(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const s = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(s); const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+async function enableReminders() {
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      alert("This browser can't do reminders. On iPhone, add Hub to your Home Screen first (Share → Add to Home Screen), then try again.");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { alert("Reminders weren't allowed. On iPhone, add Hub to your Home Screen, then enable notifications."); return; }
+    await loadContext();
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY) });
+    const j = sub.toJSON();
+    const { error } = await supabase.from("push_subscriptions").upsert(
+      { family_id: state.familyId, member_id: (state.member && state.member.id) || null, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth },
+      { onConflict: "endpoint" }
+    );
+    if (error) { alert("Couldn't save the subscription: " + error.message); return; }
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (state.familyId && tz) await supabase.from("families").update({ tz }).eq("id", state.familyId);
+    localStorage.setItem("fh_notif", "1");
+    alert("🔔 Reminders are on for this device.");
+    render();
+  } catch (e) { alert("Couldn't enable reminders: " + (e.message || e)); }
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "navigate" && e.data.url) { const h = e.data.url.indexOf("#"); if (h >= 0) location.hash = e.data.url.slice(h); }
+});
 
 // ---- router ----------------------------------------------------------------
 let rendering = false;
@@ -380,7 +417,7 @@ function expandSeries(ev, ovr, winStart, winEnd) {
 }
 
 // Read pipeline: singles in window + ALL recurring rows (expanded client-side).
-const EVENT_COLS = "id,title,location,member_id,starts_at,ends_at,all_day,rrule,exdates";
+const EVENT_COLS = "id,title,location,member_id,starts_at,ends_at,all_day,rrule,exdates,reminder_minutes";
 async function fetchInstances(winStart, winEnd, mode = "individual") {
   const me = state.member.id;
   // individual: this member + whole-family; combined: every member + whole-family
@@ -446,6 +483,7 @@ async function splitSeries(base, occ, form) {                 // "this + future"
   return supabase.from("events").insert({
     family_id: state.familyId, member_id: form.member_id, title: form.title, location: form.location,
     starts_at: form.starts_at, ends_at: form.ends_at, all_day: form.all_day, rrule: form.rrule, exdates: [],
+    reminder_minutes: form.reminder_minutes ?? null,
   }).select().single();
 }
 const fetchNotes = (eventId) => supabase.from("event_notes").select("id,body,author_member_id,created_at").eq("event_id", eventId).order("created_at", { ascending: true });
@@ -565,6 +603,7 @@ async function renderCalendar() {
         <button class="link" id="today">Today</button>
       </div>
       ${loadErr ? `<p class="err">${esc(loadErr)}</p>` : ""}
+      ${(typeof Notification !== "undefined" && Notification.permission !== "granted") ? `<button class="link" id="enableNotif" style="display:block;margin:0 auto 12px;color:var(--accent);font-weight:700">🔔 Turn on reminders on this device</button>` : ""}
       <div id="calbody"></div>
       ${view !== "month" ? `<button class="fab" id="fab" title="Add event">＋</button>` : ""}
       <div class="row"><button class="link" id="signout">Sign out</button></div>
@@ -590,6 +629,7 @@ async function renderCalendar() {
     state.viewMonth = new Date(n.getFullYear(), n.getMonth(), 1);
     renderCalendar();
   };
+  const enBtn = document.getElementById("enableNotif"); if (enBtn) enBtn.onclick = enableReminders;
 
   const body = document.getElementById("calbody");
   if (view === "day") renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue);
@@ -798,6 +838,29 @@ async function renderTasksView(body) {
 }
 
 // ---- shared recurrence editor (used by event + task forms) -----------------
+// reminder offset picker (returns minutes-before, or null = off)
+function remindSelectHTML(id, val) {
+  const v = (val === null || val === undefined) ? "" : String(val);
+  const known = ["", "5", "15", "30", "60"];
+  const isCustom = v !== "" && !known.includes(v);
+  const opt = (ov, label) => `<option value="${ov}"${v === ov ? " selected" : ""}>${label}</option>`;
+  return `<select id="${id}">
+    ${opt("", "Off")}${opt("5", "5 min before")}${opt("15", "15 min before")}${opt("30", "30 min before")}${opt("60", "1 hour before")}
+    <option value="custom"${isCustom ? " selected" : ""}>Custom…</option>
+  </select>
+  <input id="${id}_custom" type="number" min="1" placeholder="minutes before" value="${isCustom ? esc(v) : ""}" style="display:${isCustom ? "block" : "none"};margin-top:6px" />`;
+}
+function wireRemind(id) {
+  const sel = document.getElementById(id), cust = document.getElementById(id + "_custom");
+  if (!sel) return () => null;
+  sel.onchange = () => { cust.style.display = sel.value === "custom" ? "block" : "none"; };
+  return () => {
+    if (sel.value === "") return null;
+    if (sel.value === "custom") { const n = parseInt(cust.value, 10); return Number.isFinite(n) && n > 0 ? n : null; }
+    return parseInt(sel.value, 10);
+  };
+}
+
 function recurSectionHTML(rui) {
   const cf = rui.custFreq || "WEEKLY";
   const wdBtns = WEEKDAYS.map((d, i) => `<button type="button" class="wd${rui.byday.includes(d) ? " on" : ""}" data-d="${d}">${["M","T","W","T","F","S","S"][i]}</button>`).join("");
@@ -900,6 +963,8 @@ function openEventForm(inst, presetDayKey) {
             <option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option>
             <option value="60" selected>1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option>
             <option value="180">3 hours</option><option value="240">4 hours</option></select></div>
+          <label>Remind</label>
+          ${remindSelectHTML("ev_remind", isEdit ? base.reminder_minutes : 15)}
         </div>
         <div id="allday" style="display:none">
           <label>Date</label><input id="f_date" type="date" />
@@ -969,6 +1034,7 @@ function openEventForm(inst, presetDayKey) {
   // ----- recurrence editor (shared helper) -----
   const recurBox = $("recurBox");
   const readRecur = wireRecur(overlay).read;
+  const readEvRemind = wireRemind("ev_remind");
 
   // ----- scope selector (recurring edit): re-prefill + show/hide recurrence -----
   const scopeSel = $("ev_scope");
@@ -1019,20 +1085,21 @@ function openEventForm(inst, presetDayKey) {
     const f = readForm();
     if (f.err) { err.textContent = f.err; return; }
     const rule = buildRuleString(readRecur());
+    const reminder_minutes = f.all_day ? null : readEvRemind();
     const scope = scopeSel ? scopeSel.value : null;
     const save = $("evSave"); save.disabled = true; save.textContent = "Saving…";
 
     let res;
     if (!isEdit) {
-      res = await createEvent({ title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule });
+      res = await createEvent({ title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
     } else if (!isRecurring) {
-      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule });
+      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
     } else if (scope === "this") {
       res = await overrideOccurrence(base, inst.occKey, { starts_at: f.starts_at, ends_at: f.ends_at, title: f.title, location: f.location });
     } else if (scope === "future") {
-      res = await splitSeries(base, new Date(inst.occISO), { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule });
+      res = await splitSeries(base, new Date(inst.occISO), { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
     } else { // all
-      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule });
+      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
     }
     if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
     close();
@@ -1142,6 +1209,8 @@ function openTaskItemForm(task, occKey, presetDayKey) {
         <input id="ti_date" type="date" value="${esc((task && task.due_date) || dayKey)}" />
         <label>Due time (optional)</label>
         <input id="ti_time" type="time" value="${esc(task && task.due_time ? task.due_time.slice(0, 5) : "")}" />
+        <label>Remind</label>
+        ${remindSelectHTML("ti_remind", isEdit ? task.reminder_minutes : 15)}
         <label>Notes</label>
         <textarea id="ti_desc" rows="2" placeholder="Optional">${esc(task ? (task.description || "") : "")}</textarea>
         ${recurSectionHTML(rui)}
@@ -1155,6 +1224,7 @@ function openTaskItemForm(task, occKey, presetDayKey) {
   document.getElementById("tiClose").onclick = close;
   if (!isEdit) document.getElementById("tiToEvent").onclick = () => { close(); openEventForm(null, dayKey); };
   const readRecur = wireRecur(overlay).read;
+  const readRemind = wireRemind("ti_remind");
 
   document.getElementById("tiForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1170,6 +1240,7 @@ function openTaskItemForm(task, occKey, presetDayKey) {
       due_date,
       due_time: document.getElementById("ti_time").value || null,
       rrule: buildRuleString(readRecur()),
+      reminder_minutes: readRemind(),
       kind: "task", star_reward: 0,
     };
     const save = document.getElementById("tiSave"); save.disabled = true; save.textContent = "Saving…";
