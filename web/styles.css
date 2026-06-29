@@ -21,6 +21,8 @@ body{
   display:flex; align-items:center; justify-content:space-between;
   padding:14px 18px; border-bottom:1px solid var(--line);
   position:sticky; top:0; background:rgba(251,247,240,.9); backdrop-filter:blur(8px);
+  /* clear the iOS status bar (notch / Dynamic Island) in standalone PWA mode */
+  padding-top:calc(14px + env(safe-area-inset-top));
 }
 .topbar h1{ font-size:17px; margin:0; font-weight:700; }
 .topbar .who{ display:flex; align-items:center; gap:8px; font-size:14px; color:var(--muted); }
@@ -114,8 +116,14 @@ input:focus,select:focus,textarea:focus{ outline:none; border-color:var(--accent
 /* ---- M2: event modal ---- */
 .modal-overlay{ position:fixed; inset:0; background:rgba(46,42,38,.45); backdrop-filter:blur(3px);
   display:flex; align-items:flex-end; justify-content:center; z-index:50; }
-.modal{ width:100%; max-width:520px; max-height:92dvh; overflow:auto; background:var(--bg);
-  border:1px solid var(--line); border-radius:18px 18px 0 0; }
+/* lock background scroll whenever any modal is open (all overlays share this class) */
+body:has(.modal-overlay){ overflow:hidden; }
+.modal{ width:100%; max-width:520px; max-height:92dvh; background:var(--bg);
+  border:1px solid var(--line); border-radius:18px 18px 0 0;
+  /* scroll only vertically; horizontal overflow caused the sheet to slide sideways */
+  overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain;
+  /* keep the sheet bottom clear of the home indicator */
+  padding-bottom:env(safe-area-inset-bottom); }
 @media(min-width:560px){ .modal-overlay{ align-items:center; } .modal{ border-radius:18px; } }
 .modal-top{ display:flex; align-items:center; justify-content:space-between; gap:12px;
   padding:14px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); }
@@ -325,7 +333,7 @@ button.finrow:hover{ border-color:var(--accent); }
   color:#fff; font-size:10px; font-weight:700; }
 .bav{ position:absolute; top:6px; right:6px; width:18px; height:18px; border-radius:50%;
   background:rgba(255,255,255,.28); display:grid; place-items:center; font-size:10px; color:#fff; }
-.fab{ position:fixed; right:18px; bottom:18px; width:56px; height:56px; border-radius:50%;
+.fab{ position:fixed; right:18px; bottom:calc(18px + env(safe-area-inset-bottom)); width:56px; height:56px; border-radius:50%;
   background:var(--accent); color:#fff; font-size:28px; line-height:1; border:none; padding:0;
   box-shadow:0 6px 18px rgba(255,122,69,.45); z-index:20; display:grid; place-items:center; }
 
