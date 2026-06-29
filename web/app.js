@@ -132,6 +132,25 @@ async function enableReminders() {
     render();
   } catch (e) { alert("Couldn't enable reminders: " + (e.message || e)); }
 }
+// "Follow the active profile": re-point this device's subscription to whoever is now selected.
+async function syncSubscriptionMember() {
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+    const m = getMember();
+    if (!m) return;
+    await loadContext();
+    if (!state.familyId) return;
+    const j = sub.toJSON();
+    await supabase.from("push_subscriptions").upsert(
+      { family_id: state.familyId, member_id: m.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth },
+      { onConflict: "endpoint" }
+    );
+  } catch (_) { /* best-effort */ }
+}
 if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", (e) => {
   if (e.data && e.data.type === "navigate" && e.data.url) { const h = e.data.url.indexOf("#"); if (h >= 0) location.hash = e.data.url.slice(h); }
 });
@@ -145,6 +164,7 @@ async function render() {
     teardownRealtime(); // drop any live subscription when navigating
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return viewLogin();
+    if (!state._subSynced && getMember()) { state._subSynced = true; syncSubscriptionMember(); }
 
     const route = location.hash || "#/";
     const needMember = (fn) => { const m = getMember(); if (!m) return go("#/picker"); state.member = m; return fn(); };
@@ -229,7 +249,7 @@ async function viewPicker() {
       ${avatarHTML(m)}
       <span>${esc(m.name)}</span>
       <span class="role">${m.is_child ? "Kid" : "Parent"}</span>`;
-    b.onclick = () => { setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child, avatar_url: m.avatar_url }); go("#/home"); };
+    b.onclick = () => { setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child, avatar_url: m.avatar_url }); syncSubscriptionMember(); go("#/home"); };
     tiles.appendChild(b);
   }
 }
