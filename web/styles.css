@@ -427,6 +427,13 @@ button.finrow:hover{ border-color:var(--accent); }
 .trmeta{ font-size:12px; }
 .lbh.overdueh{ color:var(--danger); }
 
+/* ---- grocery enhancements: store / low / critical / buy-by ---- */
+.lowbadge{ font-size:10px; color:#C2410C; background:#FFF1EA; border:1px solid var(--accent); border-radius:999px; padding:1px 7px; font-weight:700; }
+.critflag{ color:var(--danger); font-weight:800; margin-right:4px; }
+.mrow.crit{ background:#FCEFEC; border-radius:8px; padding-left:6px; }
+.byb{ font-size:11px; color:var(--muted); font-weight:600; }
+.byb.over{ color:var(--danger); }
+
 /* ---- M7b: offline pending marker ---- */
 .pendmark{ font-size:12px; opacity:.85; }
 .offline-banner{ position:sticky; top:0; z-index:40; background:#9A3412; color:#FFE8D6;

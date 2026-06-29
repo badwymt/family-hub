@@ -2076,11 +2076,12 @@ function openExpenseForm(exp) {
 
 // ---- Phase 6: Meals & grocery (have / buy / plan) --------------------------
 const MEAL_COLOR = "#7C83DB";
-const fetchPantry = () => supabase.from("pantry_items").select("id,name,category").order("category").order("name");
+const fetchPantry = () => supabase.from("pantry_items").select("id,name,category,status,default_store_id").order("category").order("name");
 const fetchStores = () => supabase.from("stores").select("id,name,sort_order").order("sort_order");
-const fetchShopping = () => supabase.from("shopping_items").select("id,name,store_id,got").order("created_at");
+const fetchShopping = () => supabase.from("shopping_items").select("id,name,store_id,got,critical,need_by,source_pantry_id").order("created_at");
 const fetchMealsRange = (startKey, endKey) => supabase.from("meals").select("id,title,meal_type,day").gte("day", startKey).lte("day", endKey).order("day");
 const createPantry = (p) => supabase.from("pantry_items").insert({ family_id: state.familyId, ...p }).select().single();
+const updatePantry = (id, p) => supabase.from("pantry_items").update(p).eq("id", id);
 const delPantry = (id) => supabase.from("pantry_items").delete().eq("id", id);
 const createStore = (name, ord) => supabase.from("stores").insert({ family_id: state.familyId, name, sort_order: ord }).select().single();
 const createShopping = (p) => supabase.from("shopping_items").insert({ family_id: state.familyId, ...p }).select().single();
@@ -2092,7 +2093,7 @@ const delMeal = (id) => supabase.from("meals").delete().eq("id", id);
 async function viewMeals() {
   await loadContext();
   if (!state.mealView) state.mealView = "have";
-  if (!state.buyStore) state.buyStore = "all";
+  if (!state.buyStore) state.buyStore = localStorage.getItem("fh_buystore") || "all";
   if (!state.viewDay) state.viewDay = new Date();
   await renderMeals();
   subscribeRealtime(["pantry_items", "stores", "shopping_items", "meals"], () => renderMeals());
@@ -2129,18 +2130,68 @@ async function renderHaveSection(body) {
   let items = [];
   try { const r = await fetchPantry(); if (!r.error) items = r.data || []; } catch (e) {}
   const cats = [...new Set(items.map((i) => i.category))];
+  const rowHtml = (i) => `<div class="mrow">
+    <span style="flex:1;font-weight:600">${esc(i.name)}${i.status === "low" ? ` <span class="lowbadge">low · on list</span>` : ""}</span>
+    ${i.status === "low" ? "" : `<button class="pill" data-buy="${i.id}">→ buy</button>`}
+    <button class="xbtn" data-del="${i.id}">✕</button></div>`;
   body.innerHTML = `
     <div class="card" style="margin:0">
       <div class="mealhead"><strong>In the house</strong><button class="pill on" id="addHave">＋ Add</button></div>
-      <p class="sub" style="text-align:left;margin:2px 0 10px">A quick glance before shopping. Tap “→ buy” when running low.</p>
-      ${items.length ? cats.map((cat) => `<div class="mut catlbl">${esc(cat)}</div>${items.filter((i) => i.category === cat).map((i) => `
-        <div class="mrow"><span style="flex:1;font-weight:600">${esc(i.name)}</span>
-          <button class="pill" data-buy="${i.id}" data-n="${esc(i.name)}">→ buy</button>
-          <button class="xbtn" data-del="${i.id}">✕</button></div>`).join("")}`).join("") : `<p class="sub">Nothing yet — add staples like milk, eggs.</p>`}
+      <p class="sub" style="text-align:left;margin:2px 0 10px">A quick glance before shopping. Tap “→ buy” when you need more.</p>
+      ${items.length ? cats.map((cat) => `<div class="mut catlbl">${esc(cat)}</div>${items.filter((i) => i.category === cat).map(rowHtml).join("")}`).join("") : `<p class="sub">Nothing yet — add staples like milk, eggs.</p>`}
     </div>`;
   document.getElementById("addHave").onclick = () => mealForm("have");
-  body.querySelectorAll("[data-buy]").forEach((b) => b.onclick = async () => { await createShopping({ name: b.dataset.n, store_id: null, got: false }); state.mealView = "buy"; renderMeals(); });
+  body.querySelectorAll("[data-buy]").forEach((b) => b.onclick = () => { const it = items.find((x) => x.id === b.dataset.buy); if (it) moveToBuy(it); });
   body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { await delPantry(b.dataset.del); renderMeals(); });
+}
+
+// move an in-house item onto the buy list: choose store, low-vs-out, critical, buy-by
+function moveToBuy(item) {
+  const stores = state._stores || [];
+  const defStore = item.default_store_id || (state.buyStore !== "all" ? state.buyStore : "");
+  const overlay = document.createElement("div"); overlay.className = "modal-overlay";
+  overlay.innerHTML = `<form class="modal" id="mvForm">
+    <div class="modal-top"><button type="button" class="iconbtn" id="mvClose">✕</button><strong>Add “${esc(item.name)}” to buy list</strong><button type="submit" id="mvSave">Save</button></div>
+    <div class="modal-body">
+      <label>Store</label>
+      <select id="mv_store"><option value="">No store</option>${stores.map((s) => `<option value="${s.id}"${defStore === s.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}<option value="__new">+ New store…</option></select>
+      <input id="mv_newstore" placeholder="New store name" style="display:none;margin-top:8px" />
+      <label>Do we still have some?</label>
+      <div class="endmode"><button type="button" id="mv_low" class="on">Running low</button><button type="button" id="mv_out">We're out</button></div>
+      <label class="inline"><input type="checkbox" id="mv_crit" /> Critical</label>
+      <label>Buy by (optional)</label><input id="mv_by" type="date" />
+      <div class="err" id="mvErr"></div>
+    </div></form>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("mvClose").onclick = close;
+  let stock = "low";
+  const lowB = document.getElementById("mv_low"), outB = document.getElementById("mv_out");
+  lowB.onclick = () => { stock = "low"; lowB.classList.add("on"); outB.classList.remove("on"); };
+  outB.onclick = () => { stock = "out"; outB.classList.add("on"); lowB.classList.remove("on"); };
+  const sel = document.getElementById("mv_store");
+  sel.onchange = () => { document.getElementById("mv_newstore").style.display = sel.value === "__new" ? "block" : "none"; };
+  document.getElementById("mvForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("mvErr"); err.textContent = "";
+    const save = document.getElementById("mvSave"); save.disabled = true; save.textContent = "Saving…";
+    let store_id = sel.value || null;
+    if (store_id === "__new") {
+      const nm = (document.getElementById("mv_newstore").value || "").trim();
+      if (!nm) { err.textContent = "Enter the new store name."; save.disabled = false; save.textContent = "Save"; return; }
+      const sr = await createStore(nm, (state._stores || []).length);
+      if (sr.error) { err.textContent = sr.error.message; save.disabled = false; save.textContent = "Save"; return; }
+      store_id = sr.data.id;
+    }
+    const need_by = document.getElementById("mv_by").value || null;
+    const critical = document.getElementById("mv_crit").checked;
+    const res = await createShopping({ name: item.name, store_id, got: false, critical, need_by, source_pantry_id: item.id });
+    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (stock === "out") await delPantry(item.id);
+    else await updatePantry(item.id, { status: "low", default_store_id: store_id });
+    close(); state.mealView = "buy"; renderMeals();
+  });
 }
 
 async function renderBuySection(body, stores) {
@@ -2148,27 +2199,44 @@ async function renderBuySection(body, stores) {
   try { const r = await fetchShopping(); if (!r.error) items = r.data || []; } catch (e) {}
   const storeById = Object.fromEntries(stores.map((s) => [s.id, s]));
   const storeColor = (id) => { const idx = stores.findIndex((s) => s.id === id); return idx < 0 ? "#8A8178" : CATCOLORS[idx % CATCOLORS.length]; };
+  const todayKey = dateKey(new Date());
   const filtered = state.buyStore === "all" ? items : items.filter((i) => i.store_id === state.buyStore);
-  const active = filtered.filter((i) => !i.got), got = filtered.filter((i) => i.got);
-  const pill = (id, label) => `<button class="spill${state.buyStore === id ? " on" : ""}" data-s="${id}">${esc(label)}</button>`;
+  const active = filtered.filter((i) => !i.got).sort((a, b) => ((b.critical ? 1 : 0) - (a.critical ? 1 : 0)) || ((a.need_by || "9999-99-99").localeCompare(b.need_by || "9999-99-99")));
+  const got = filtered.filter((i) => i.got);
+  const countFor = (sid) => items.filter((i) => !i.got && (sid === "all" || i.store_id === sid)).length;
+  const pill = (id, label) => { const n = countFor(id); return `<button class="spill${state.buyStore === id ? " on" : ""}" data-s="${id}">${esc(label)}${n ? ` · ${n}` : ""}</button>`; };
+  const rowActive = (i) => {
+    const overdue = i.need_by && i.need_by < todayKey;
+    return `<div class="mrow${i.critical ? " crit" : ""}"><button class="ck" data-got="${i.id}"></button>
+      <span style="flex:1;font-weight:600">${i.critical ? `<span class="critflag">⚠</span>` : ""}${esc(i.name)}${i.need_by ? ` <span class="byb${overdue ? " over" : ""}">by ${esc(fmtDue(i.need_by))}</span>` : ""}</span>
+      ${i.store_id ? `<span class="tagchip" style="background:${storeColor(i.store_id)}">${esc((storeById[i.store_id] || {}).name || "")}</span>` : ""}
+      <button class="xbtn" data-del="${i.id}">✕</button></div>`;
+  };
   body.innerHTML = `
     <div class="spillrow">${pill("all", "All")}${stores.map((s) => pill(s.id, s.name)).join("")}</div>
     <div class="card" style="margin:0">
       <div class="mealhead"><strong>Need to buy</strong><button class="pill on" id="addBuy">＋ Add</button></div>
       ${state.buyStore !== "all" ? `<p class="sub" style="text-align:left;margin:2px 0 8px">New items here auto-tag ${esc((storeById[state.buyStore] || {}).name || "")}.</p>` : ""}
-      <div id="buylist">${active.length ? active.map((i) => `
-        <div class="mrow"><button class="ck" data-got="${i.id}"></button><span style="flex:1;font-weight:600">${esc(i.name)}</span>
-          ${i.store_id ? `<span class="tagchip" style="background:${storeColor(i.store_id)}">${esc((storeById[i.store_id] || {}).name || "")}</span>` : ""}
-          <button class="xbtn" data-del="${i.id}">✕</button></div>`).join("") : `<p class="sub">Nothing to buy.</p>`}
+      <div id="buylist">${active.length ? active.map(rowActive).join("") : `<p class="sub">Nothing to buy.</p>`}
         ${got.length ? `<div class="mut catlbl">Got it (${got.length})</div>${got.map((i) => `
         <div class="mrow"><button class="ck on" data-got="${i.id}">✓</button><span style="flex:1;text-decoration:line-through;color:var(--muted)">${esc(i.name)}</span>
           <button class="xbtn" data-del="${i.id}">✕</button></div>`).join("")}` : ""}
       </div>
     </div>`;
-  body.querySelectorAll(".spill").forEach((b) => b.onclick = () => { state.buyStore = b.dataset.s; renderMeals(); });
+  body.querySelectorAll(".spill").forEach((b) => b.onclick = () => { state.buyStore = b.dataset.s; localStorage.setItem("fh_buystore", state.buyStore); renderMeals(); });
   document.getElementById("addBuy").onclick = () => mealForm("buy");
-  body.querySelectorAll("[data-got]").forEach((b) => b.onclick = async () => { const it = items.find((x) => x.id === b.dataset.got); await updateShopping(b.dataset.got, { got: !it.got }); renderMeals(); });
-  body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { await delShopping(b.dataset.del); renderMeals(); });
+  body.querySelectorAll("[data-got]").forEach((b) => b.onclick = async () => {
+    const it = items.find((x) => x.id === b.dataset.got);
+    const newGot = !it.got;
+    await updateShopping(b.dataset.got, { got: newGot });
+    if (newGot && it.source_pantry_id) await updatePantry(it.source_pantry_id, { status: "in" }); // restock the pantry when bought
+    renderMeals();
+  });
+  body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+    const it = items.find((x) => x.id === b.dataset.del);
+    if (it && it.source_pantry_id) await updatePantry(it.source_pantry_id, { status: "in" });
+    await delShopping(b.dataset.del); renderMeals();
+  });
 }
 
 async function renderPlanSection(body) {
@@ -2198,7 +2266,9 @@ function mealForm(kind) {
     <label>Where</label><select id="mf_cat"><option>Fridge</option><option>Pantry</option><option>Freezer</option></select>`;
   else if (kind === "buy") inner = `<label>Item</label><input id="mf_name" placeholder="Cheese" />
     <label>Store</label><select id="mf_store"><option value="">No store</option>${stores.map((s) => `<option value="${s.id}"${state.buyStore === s.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}<option value="__new">+ New store…</option></select>
-    <input id="mf_newstore" placeholder="New store name" style="display:none;margin-top:8px" />`;
+    <input id="mf_newstore" placeholder="New store name" style="display:none;margin-top:8px" />
+    <label class="inline"><input type="checkbox" id="mf_crit" /> Critical</label>
+    <label>Buy by (optional)</label><input id="mf_by" type="date" />`;
   else inner = `<label>Meal</label><input id="mf_name" placeholder="Pasta night" />
     <label>Type</label><select id="mf_type"><option>Dinner</option><option>Lunch</option><option>Breakfast</option></select>
     <label>Day</label><input id="mf_day" type="date" value="${dateKey(state.viewDay || new Date())}" />
@@ -2228,7 +2298,7 @@ function mealForm(kind) {
         if (sr.error) { err.textContent = sr.error.message; save.disabled = false; save.textContent = "Save"; return; }
         store_id = sr.data.id;
       } else if (!store_id) store_id = state.buyStore !== "all" ? state.buyStore : null;
-      res = await createShopping({ name, store_id, got: false });
+      res = await createShopping({ name, store_id, got: false, critical: document.getElementById("mf_crit").checked, need_by: document.getElementById("mf_by").value || null });
     } else res = await createMeal({ title: name, meal_type: document.getElementById("mf_type").value, day: document.getElementById("mf_day").value });
     if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
     close(); renderMeals();
