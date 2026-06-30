@@ -3,7 +3,7 @@
 // - LIB_CACHE:   cross-origin ES modules (esm.sh) cached on first load.
 // - DATA_CACHE:  Supabase REST GETs (network-first, cache fallback) = offline reads.
 // Writes (POST/PATCH/RPC) and the realtime socket are never cached.
-const VERSION = "v20";
+const VERSION = "v21";
 const SHELL_CACHE = "family-hub-shell-" + VERSION;
 const LIB_CACHE = "family-hub-libs-" + VERSION;
 const DATA_CACHE = "family-hub-data-" + VERSION;
