@@ -306,7 +306,8 @@ button.finrow:hover{ border-color:var(--accent); }
 .alldaystrip .lbl{ font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
 .adchip{ font-size:12px; color:#fff; padding:3px 10px; border-radius:999px; font-weight:600; cursor:pointer; }
 
-.dayscroll{ max-height:calc(100dvh - 340px); min-height:240px; overflow-y:auto;
+/* tab bar removed → reclaim the freed vertical space for the day grid */
+.dayscroll{ max-height:calc(100dvh - 288px); min-height:320px; overflow-y:auto;
   border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); background:var(--panel); }
 .daygrid{ position:relative; background:var(--panel); }
 .hourrow{ display:flex; height:56px; border-top:1px solid var(--line); }
@@ -324,7 +325,7 @@ button.finrow:hover{ border-color:var(--accent); }
 
 .weekgrid{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
 .weekcol{ background:var(--panel); border:1px solid var(--line); border-radius:11px;
-  padding:8px 7px; min-height:120px; box-shadow:var(--shadow); }
+  padding:8px 7px; min-height:calc(100dvh - 300px); box-shadow:var(--shadow); }
 .weekcol h5{ margin:0 0 8px; font-size:11px; color:var(--muted); text-align:center; font-weight:700; cursor:pointer; }
 .weekcol h5.today{ color:var(--accent); }
 .wkev{ font-size:11px; color:#fff; padding:4px 6px; border-radius:7px; margin-bottom:5px;

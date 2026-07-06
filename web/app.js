@@ -797,7 +797,7 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
   body.innerHTML = `
     ${(allday.length || dayMeals.length || dateTasks.length || od.length) ? `<div class="alldaystrip"><span class="lbl">All day · tasks</span>${
       od.length ? `<span class="overduechip" id="overdueChip">⚠ Overdue (${od.length})</span>` : ""
-    }${dayMeals.map((m) => `<span class="mealchip" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)} — ${esc(m.title)}</span>`).join("")
+    }${dayMeals.map((m) => `<span class="mealchip" data-mid="${esc(m.id)}" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)} — ${esc(m.title)}</span>`).join("")
     }${dateTasks.map(taskChip).join("")
     }${allday.map((i) => {
       const m = i.member_id ? state.membersById[i.member_id] : null; const col = m ? colorFor(m.color) : ALL_COLOR;
@@ -808,7 +808,7 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
   body.querySelectorAll(".evblock:not(.taskblock),.adchip").forEach((b) => {
     b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
   });
-  body.querySelectorAll(".mealchip").forEach((c) => { c.onclick = () => go("#/meals"); });
+  body.querySelectorAll(".mealchip").forEach((c) => { c.onclick = () => { const m = dayMeals.find((x) => x.id === c.dataset.mid); if (m) mealPlanForm(m, m.day, renderCalendar); else go("#/meals"); }; });
   const allCells = dayTasks.concat(od);
   const findCell = (id, occ) => allCells.find((c) => c.task.id === id && String(c.occ ?? "") === occ);
   body.querySelectorAll(".tck").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const c = findCell(b.dataset.tid, b.dataset.occ); if (c && !c.done) { completeTaskCell(c); renderCalendar(); } }; });
@@ -832,7 +832,7 @@ function renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay) {
       const t = inst.all_day ? "" : fmtTime(inst.starts_at) + " ";
       return `<div class="wkev" data-iid="${esc(inst.iid)}" style="background:${col}">${t}${esc(inst.title)}</div>`;
     }).join("");
-    const mealChips = ((mealsByDay && mealsByDay[k]) || []).map((m) => `<div class="wkev mealwk" style="background:${MEAL_COLOR}">🍴 ${esc(m.title)}</div>`).join("");
+    const mealChips = ((mealsByDay && mealsByDay[k]) || []).map((m) => `<div class="wkev mealwk" data-mid="${esc(m.id)}" style="background:${MEAL_COLOR}">🍴 ${esc(m.title)}</div>`).join("");
     const taskChips = ((taskCellsByDay && taskCellsByDay[k]) || []).map((c) => {
       const m = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
       const col = m ? colorFor(m.color) : "#8A8178";
@@ -841,7 +841,8 @@ function renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay) {
     cols += `<div class="weekcol"><h5 class="${k === todayKey ? "today" : ""}" data-k="${k}">${WD[i]} ${d.getDate()}</h5>${chips}${mealChips}${taskChips}</div>`;
   }
   body.innerHTML = `<div class="weekgrid">${cols}</div>`;
-  body.querySelectorAll(".mealwk").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); go("#/meals"); }; });
+  const findMeal = (id) => { for (const kk in (mealsByDay || {})) { const m = mealsByDay[kk].find((x) => x.id === id); if (m) return m; } return null; };
+  body.querySelectorAll(".mealwk").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const m = findMeal(b.dataset.mid); if (m) mealPlanForm(m, m.day, renderCalendar); else go("#/meals"); }; });
   const findTask = (id, occ) => { for (const k in (taskCellsByDay || {})) { const c = taskCellsByDay[k].find((x) => x.task.id === id && String(x.occ ?? "") === occ); if (c) return c; } return null; };
   body.querySelectorAll(".wktask").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const c = findTask(b.dataset.tid, b.dataset.occ); if (c) openTaskItemForm(c.task, c.occ ?? null); }; });
   body.querySelectorAll(".wkev:not(.mealwk):not(.wktask)").forEach((b) => {
@@ -2449,7 +2450,8 @@ async function renderPlanSection(body) {
 }
 
 // Add or edit a planned meal (title, type, day) with delete when editing.
-function mealPlanForm(meal, presetDay) {
+function mealPlanForm(meal, presetDay, onDone) {
+  const refresh = onDone || renderMeals; // callers on the calendar pass renderCalendar
   const isEdit = !!meal;
   const day = meal ? meal.day : (presetDay || dateKey(new Date()));
   const curType = meal ? meal.meal_type : "Dinner";
@@ -2470,7 +2472,7 @@ function mealPlanForm(meal, presetDay) {
   const close = () => overlay.remove();
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   document.getElementById("mpClose").onclick = close;
-  const del = document.getElementById("mpDelete"); if (del) del.onclick = async () => { await delMeal(meal.id); close(); renderMeals(); };
+  const del = document.getElementById("mpDelete"); if (del) del.onclick = async () => { await delMeal(meal.id); close(); refresh(); };
   document.getElementById("mpForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = document.getElementById("mpErr"); err.textContent = "";
@@ -2481,7 +2483,7 @@ function mealPlanForm(meal, presetDay) {
     const payload = { title: name, meal_type: document.getElementById("mp_type").value, day: dayVal };
     const res = isEdit ? await updateMeal(meal.id, payload) : await createMeal(payload);
     if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
-    close(); renderMeals();
+    close(); refresh();
   });
 }
 
