@@ -31,12 +31,9 @@ const fmtTime = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const WD = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const fmtDayHeader = (d) => `${WD[(d.getDay() + 6) % 7]} ${MONTHS[d.getMonth()].slice(0,3)} ${d.getDate()}`;
-const navTabs = (active) => `<nav class="tabs">
-  <a href="#/home" class="${active === "home" ? "on" : ""}">Calendar</a>
-  <a href="#/tasks" class="${active === "tasks" ? "on" : ""}">Chores</a>
-  <a href="#/finance" class="${active === "finance" ? "on" : ""}">Finance</a>
-  <a href="#/meals" class="${active === "meals" ? "on" : ""}">Meals</a>
-</nav>`;
+// Top tab bar removed — navigation is via the Home page (#/hub) + floating Home button.
+// Kept as a no-op so existing call sites render nothing (see ensureHomeFab / viewHub).
+const navTabs = () => "";
 const fmtDue = (d) => {
   if (!d) return "";
   const today = dateKey(new Date());
@@ -168,6 +165,7 @@ async function render() {
 
     const route = location.hash || "#/";
     const needMember = (fn) => { const m = getMember(); if (!m) return go("#/picker"); state.member = m; return fn(); };
+    if (route.startsWith("#/hub")) return needMember(viewHub);
     if (route.startsWith("#/home")) return needMember(viewCalendar);
     if (route.startsWith("#/tasks")) return needMember(viewTasks);
     if (route.startsWith("#/stars") || route.startsWith("#/rewards")) return go("#/tasks");
@@ -177,7 +175,53 @@ async function render() {
     return viewPicker();
   } finally {
     rendering = false;
+    ensureHomeFab();
   }
+}
+
+// Persistent floating Home button: shown on the four section pages, hidden elsewhere.
+function ensureHomeFab() {
+  let fab = document.getElementById("homeFab");
+  if (!fab) {
+    fab = document.createElement("button");
+    fab.id = "homeFab"; fab.className = "homefab"; fab.type = "button";
+    fab.title = "Home"; fab.setAttribute("aria-label", "Home"); fab.textContent = "🏠";
+    fab.onclick = () => go("#/hub");
+    document.body.appendChild(fab);
+  }
+  const h = location.hash || "";
+  const showOn = ["#/home", "#/tasks", "#/finance", "#/meals"];
+  fab.style.display = showOn.some((r) => h.startsWith(r)) ? "grid" : "none";
+}
+
+// ---- view: home hub (section launcher) -------------------------------------
+async function viewHub() {
+  await loadContext();
+  const m = state.member || {};
+  const tile = (route, emoji, label) => `<button class="hubtile" data-r="${route}"><span class="he">${emoji}</span><span>${esc(label)}</span></button>`;
+  el.innerHTML = `
+    <header class="topbar">
+      <button class="iconbtn" id="switch" title="Switch profile">‹</button>
+      <h1>Family Hub</h1>
+      <span style="width:36px"></span>
+    </header>
+    <section class="content">
+      <div class="hubhi">${avatarHTML(m, "avatar sm")}<span>Hi ${esc(m.name || "there")} 👋</span></div>
+      <div class="hubgrid">
+        ${tile("#/home", "📅", "Calendar")}
+        ${tile("#/tasks", "✅", "Chores")}
+        ${tile("#/finance", "💰", "Finance")}
+        ${tile("#/meals", "🍴", "Meals")}
+      </div>
+      <div class="row" style="gap:14px;justify-content:center;margin-top:24px">
+        <button class="link" id="manage">⚙ Manage family</button>
+        <button class="link" id="signout">Sign out</button>
+      </div>
+    </section>`;
+  document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
+  document.getElementById("manage").onclick = () => go("#/family");
+  document.getElementById("signout").onclick = signOut;
+  el.querySelectorAll(".hubtile").forEach((b) => { b.onclick = () => go(b.dataset.r); });
 }
 window.addEventListener("hashchange", render);
 supabase.auth.onAuthStateChange(() => render());
@@ -249,7 +293,7 @@ async function viewPicker() {
       ${avatarHTML(m)}
       <span>${esc(m.name)}</span>
       <span class="role">${m.is_child ? "Kid" : "Parent"}</span>`;
-    b.onclick = () => { setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child, avatar_url: m.avatar_url }); syncSubscriptionMember(); go("#/home"); };
+    b.onclick = () => { setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child, avatar_url: m.avatar_url }); syncSubscriptionMember(); go("#/hub"); };
     tiles.appendChild(b);
   }
 }
@@ -370,16 +414,21 @@ const FREQ_UNIT = { DAILY: "day(s)", WEEKLY: "week(s)", MONTHLY: "month(s)", YEA
 const toRRuleUntil = (dateStr) => dateStr.replace(/-/g, "") + "T235959Z";            // 'YYYY-MM-DD' -> end-of-day Z
 const dateToUntil = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, ""); // Date -> YYYYMMDDTHHMMSSZ
 
+// preserve the ordinal prefix for positional monthly rules (e.g. "1SU" = first Sunday, "-1FR" = last Friday)
 function ruleParts(ruleStr) {
   const o = RRule.parseString(ruleStr);
-  const byday = o.byweekday ? [].concat(o.byweekday).map((w) => WEEKDAYS[typeof w === "number" ? w : w.weekday]) : [];
+  const byday = o.byweekday ? [].concat(o.byweekday).map((w) => {
+    if (typeof w === "number") return WEEKDAYS[w];
+    const code = WEEKDAYS[w.weekday];
+    return w.n ? `${w.n}${code}` : code;
+  }) : [];
   return { freq: FREQ_NAME[o.freq] || null, interval: o.interval || 1, byday };
 }
 function assembleRule({ freq, interval, byday }, untilStamp, count) {
   if (!freq) return null;
   const parts = [`FREQ=${freq}`];
   if (interval > 1) parts.push(`INTERVAL=${interval}`);
-  if (freq === "WEEKLY" && byday && byday.length) parts.push(`BYDAY=${byday.join(",")}`);
+  if ((freq === "WEEKLY" || freq === "MONTHLY") && byday && byday.length) parts.push(`BYDAY=${byday.join(",")}`);
   if (untilStamp) parts.push(`UNTIL=${untilStamp}`);
   else if (count) parts.push(`COUNT=${count}`);
   return parts.join(";");
@@ -389,21 +438,33 @@ const buildRuleString = (ui) => {
   if (ui.freq !== "custom") return assembleRule({ freq: ui.freq, interval: 1, byday: [] });
   const until = ui.endType === "until" && ui.until ? toRRuleUntil(ui.until) : null;
   const count = ui.endType === "count" && ui.count ? parseInt(ui.count, 10) : null;
-  return assembleRule({ freq: ui.custFreq || "WEEKLY", interval: ui.interval, byday: ui.byday }, until, count);
+  const cf = ui.custFreq || "WEEKLY";
+  // BYDAY: weekly = chosen weekdays; monthly "positional" = one ordinal weekday (e.g. 1SU); monthly "day of month" = none
+  let byday = [];
+  if (cf === "WEEKLY") byday = ui.byday;
+  else if (cf === "MONTHLY" && ui.monthMode === "pos" && ui.ord && ui.posDow) byday = [`${ui.ord}${ui.posDow}`];
+  return assembleRule({ freq: cf, interval: ui.interval, byday }, until, count);
 };
 function parseRuleToUI(ruleStr) {
-  const ui = { freq: "none", custFreq: "WEEKLY", interval: 1, byday: [], endType: "never", until: "", count: "" };
+  const ui = { freq: "none", custFreq: "WEEKLY", interval: 1, byday: [], monthMode: "dom", ord: "1", posDow: "MO", endType: "never", until: "", count: "" };
   if (!ruleStr) return ui;
   const o = RRule.parseString(ruleStr);
   const fname = FREQ_NAME[o.freq] || "WEEKLY";
   const interval = o.interval || 1;
-  const byday = o.byweekday ? [].concat(o.byweekday).map((w) => WEEKDAYS[typeof w === "number" ? w : w.weekday]) : [];
+  const bwd = o.byweekday ? [].concat(o.byweekday) : [];
+  const byday = bwd.map((w) => WEEKDAYS[typeof w === "number" ? w : w.weekday]);
+  // positional monthly? a single weekday carrying an ordinal (n)
+  const nth = (bwd.length === 1 && bwd[0] && typeof bwd[0] === "object" && bwd[0].n) ? bwd[0].n : null;
   let endType = "never", until = "", count = "";
   if (o.until) { endType = "until"; until = toDateInput(o.until.toISOString()); }
   else if (o.count) { endType = "count"; count = o.count; }
   // a simple every-1, no-byday, no-end rule maps to a preset; anything else is "custom"
   if (interval === 1 && byday.length === 0 && endType === "never") { ui.freq = fname; }
-  else { ui.freq = "custom"; ui.custFreq = fname; ui.interval = interval; ui.byday = byday; ui.endType = endType; ui.until = until; ui.count = count; }
+  else {
+    ui.freq = "custom"; ui.custFreq = fname; ui.interval = interval; ui.byday = byday;
+    ui.endType = endType; ui.until = until; ui.count = count;
+    if (fname === "MONTHLY" && nth) { ui.monthMode = "pos"; ui.ord = String(nth); ui.posDow = WEEKDAYS[bwd[0].weekday]; }
+  }
   return ui;
 }
 const withUntil = (ruleStr, capDate) => assembleRule(ruleParts(ruleStr), dateToUntil(capDate));
@@ -886,6 +947,10 @@ function recurSectionHTML(rui) {
   const wdBtns = WEEKDAYS.map((d, i) => `<button type="button" class="wd${rui.byday.includes(d) ? " on" : ""}" data-d="${d}">${["M","T","W","T","F","S","S"][i]}</button>`).join("");
   const opt = (v, l) => `<option value="${v}"${rui.freq === v ? " selected" : ""}>${l}</option>`;
   const copt = (v, l) => `<option value="${v}"${cf === v ? " selected" : ""}>${l}</option>`;
+  const ordOpt = (v, l) => `<option value="${v}"${rui.ord === v ? " selected" : ""}>${l}</option>`;
+  const DOW_NAME = { MO: "Monday", TU: "Tuesday", WE: "Wednesday", TH: "Thursday", FR: "Friday", SA: "Saturday", SU: "Sunday" };
+  const dowOpt = (v) => `<option value="${v}"${rui.posDow === v ? " selected" : ""}>${DOW_NAME[v]}</option>`;
+  const mmOpt = (v, l) => `<option value="${v}"${rui.monthMode === v ? " selected" : ""}>${l}</option>`;
   return `<div class="recur" id="recurBox">
     <label>Repeat</label>
     <select id="r_freq">
@@ -897,6 +962,14 @@ function recurSectionHTML(rui) {
         <select id="r_custfreq">${copt("DAILY", "day(s)")}${copt("WEEKLY", "week(s)")}${copt("MONTHLY", "month(s)")}${copt("YEARLY", "year(s)")}</select></div>
       <div id="r_bydayrow" style="${rui.freq === "custom" && cf === "WEEKLY" ? "" : "display:none"}">
         <label>On</label><div class="wdrow" id="r_byday">${wdBtns}</div>
+      </div>
+      <div id="r_monthrow" style="${rui.freq === "custom" && cf === "MONTHLY" ? "" : "display:none"}">
+        <label>On</label>
+        <select id="r_monthmode">${mmOpt("dom", "Same day of the month")}${mmOpt("pos", "Day of the week…")}</select>
+        <div id="r_posrow" class="r_row" style="${rui.monthMode === "pos" ? "" : "display:none"};margin-top:8px">
+          <select id="r_ord">${ordOpt("1", "First")}${ordOpt("2", "Second")}${ordOpt("3", "Third")}${ordOpt("4", "Fourth")}${ordOpt("-1", "Last")}</select>
+          <select id="r_posdow">${["SU","MO","TU","WE","TH","FR","SA"].map(dowOpt).join("")}</select>
+        </div>
       </div>
       <label>Ends</label>
       <div class="r_end">
@@ -915,6 +988,9 @@ function wireRecur(overlay) {
     custFreq: q("r_custfreq") ? q("r_custfreq").value : "WEEKLY",
     interval: Math.max(1, parseInt((q("r_interval") || {}).value || "1", 10)),
     byday: [...overlay.querySelectorAll("#r_byday .wd.on")].map((b) => b.dataset.d),
+    monthMode: (q("r_monthmode") || {}).value || "dom",
+    ord: (q("r_ord") || {}).value || "1",
+    posDow: (q("r_posdow") || {}).value || "MO",
     endType: (overlay.querySelector('input[name="r_end"]:checked') || {}).value || "never",
     until: (q("r_until") || {}).value || "",
     count: (q("r_count") || {}).value || "",
@@ -923,10 +999,15 @@ function wireRecur(overlay) {
     const ui = read();
     q("r_opts").style.display = ui.freq === "custom" ? "" : "none";
     q("r_bydayrow").style.display = (ui.freq === "custom" && ui.custFreq === "WEEKLY") ? "" : "none";
+    if (q("r_monthrow")) q("r_monthrow").style.display = (ui.freq === "custom" && ui.custFreq === "MONTHLY") ? "" : "none";
+    if (q("r_posrow")) q("r_posrow").style.display = ui.monthMode === "pos" ? "" : "none";
     q("r_preview").textContent = buildRuleString(ui) || "Does not repeat";
   };
   q("r_freq").onchange = refresh;
   if (q("r_custfreq")) q("r_custfreq").onchange = refresh;
+  if (q("r_monthmode")) q("r_monthmode").onchange = refresh;
+  if (q("r_ord")) q("r_ord").onchange = refresh;
+  if (q("r_posdow")) q("r_posdow").onchange = refresh;
   overlay.querySelectorAll("#r_byday .wd").forEach((b) => { b.onclick = () => { b.classList.toggle("on"); refresh(); }; });
   ["r_interval", "r_until", "r_count"].forEach((id) => { const e = q(id); if (e) e.addEventListener("input", refresh); });
   overlay.querySelectorAll('input[name="r_end"]').forEach((r) => r.addEventListener("change", refresh));
@@ -2084,10 +2165,13 @@ const createPantry = (p) => supabase.from("pantry_items").insert({ family_id: st
 const updatePantry = (id, p) => supabase.from("pantry_items").update(p).eq("id", id);
 const delPantry = (id) => supabase.from("pantry_items").delete().eq("id", id);
 const createStore = (name, ord) => supabase.from("stores").insert({ family_id: state.familyId, name, sort_order: ord }).select().single();
+const updateStore = (id, p) => supabase.from("stores").update(p).eq("id", id);
+const delStore = (id) => supabase.from("stores").delete().eq("id", id); // FK sets shopping_items.store_id → null (items fall back to "No shop")
 const createShopping = (p) => supabase.from("shopping_items").insert({ family_id: state.familyId, ...p }).select().single();
 const updateShopping = (id, p) => supabase.from("shopping_items").update(p).eq("id", id);
 const delShopping = (id) => supabase.from("shopping_items").delete().eq("id", id);
 const createMeal = (p) => supabase.from("meals").insert({ family_id: state.familyId, ...p }).select().single();
+const updateMeal = (id, p) => supabase.from("meals").update(p).eq("id", id);
 const delMeal = (id) => supabase.from("meals").delete().eq("id", id);
 
 async function viewMeals() {
@@ -2197,41 +2281,55 @@ function moveToBuy(item) {
 async function renderBuySection(body, stores) {
   let items = [];
   try { const r = await fetchShopping(); if (!r.error) items = r.data || []; } catch (e) {}
+  // guard: if the selected shop was deleted, fall back to All ("__none" = unassigned pseudo-filter is always valid)
+  if (state.buyStore !== "all" && state.buyStore !== "__none" && !stores.some((s) => s.id === state.buyStore)) { state.buyStore = "all"; localStorage.setItem("fh_buystore", "all"); }
   const storeById = Object.fromEntries(stores.map((s) => [s.id, s]));
   const storeColor = (id) => { const idx = stores.findIndex((s) => s.id === id); return idx < 0 ? "#8A8178" : CATCOLORS[idx % CATCOLORS.length]; };
   const todayKey = dateKey(new Date());
-  const filtered = state.buyStore === "all" ? items : items.filter((i) => i.store_id === state.buyStore);
-  const active = filtered.filter((i) => !i.got).sort((a, b) => ((b.critical ? 1 : 0) - (a.critical ? 1 : 0)) || ((a.need_by || "9999-99-99").localeCompare(b.need_by || "9999-99-99")));
-  const got = filtered.filter((i) => i.got);
-  const countFor = (sid) => items.filter((i) => !i.got && (sid === "all" || i.store_id === sid)).length;
+  const filtered = state.buyStore === "all" ? items
+    : state.buyStore === "__none" ? items.filter((i) => !i.store_id)
+    : items.filter((i) => i.store_id === state.buyStore);
+  const sortActive = (a, b) => ((b.critical ? 1 : 0) - (a.critical ? 1 : 0)) || ((a.need_by || "9999-99-99").localeCompare(b.need_by || "9999-99-99"));
+  const active = filtered.filter((i) => !i.got).sort(sortActive);
+  const countFor = (sid) => items.filter((i) => !i.got && (sid === "all" || (sid === "__none" ? !i.store_id : i.store_id === sid))).length;
   const pill = (id, label) => { const n = countFor(id); return `<button class="spill${state.buyStore === id ? " on" : ""}" data-s="${id}">${esc(label)}${n ? ` · ${n}` : ""}</button>`; };
   const rowActive = (i) => {
     const overdue = i.need_by && i.need_by < todayKey;
-    return `<div class="mrow${i.critical ? " crit" : ""}"><button class="ck" data-got="${i.id}"></button>
-      <span style="flex:1;font-weight:600">${i.critical ? `<span class="critflag">⚠</span>` : ""}${esc(i.name)}${i.need_by ? ` <span class="byb${overdue ? " over" : ""}">by ${esc(fmtDue(i.need_by))}</span>` : ""}</span>
-      ${i.store_id ? `<span class="tagchip" style="background:${storeColor(i.store_id)}">${esc((storeById[i.store_id] || {}).name || "")}</span>` : ""}
+    return `<div class="mrow${i.critical ? " crit" : ""}"><button class="ck" data-got="${i.id}" title="Bought — move to In the house"></button>
+      <button class="mname" data-edit="${i.id}">${i.critical ? `<span class="critflag">⚠</span>` : ""}${esc(i.name)}${i.need_by ? ` <span class="byb${overdue ? " over" : ""}">by ${esc(fmtDue(i.need_by))}</span>` : ""}</button>
       <button class="xbtn" data-del="${i.id}">✕</button></div>`;
   };
+  // Group by shop only in the "All" view (each shop as a section, unassigned under "No shop").
+  let listHtml;
+  if (!active.length) listHtml = `<p class="sub">Nothing to buy.</p>`;
+  else if (state.buyStore === "all") {
+    const groups = [];
+    for (const s of stores) { const g = active.filter((i) => i.store_id === s.id); if (g.length) groups.push({ name: s.name, color: storeColor(s.id), items: g }); }
+    const none = active.filter((i) => !i.store_id); if (none.length) groups.push({ name: "No shop", color: "#8A8178", items: none });
+    listHtml = groups.map((g) => `<div class="grpline"><span class="dot" style="background:${g.color}"></span>${esc(g.name)}</div>${g.items.map(rowActive).join("")}`).join("");
+  } else listHtml = active.map(rowActive).join("");
+
   body.innerHTML = `
-    <div class="spillrow">${pill("all", "All")}${stores.map((s) => pill(s.id, s.name)).join("")}</div>
+    <div class="spillrow">${pill("all", "All")}${stores.map((s) => pill(s.id, s.name)).join("")}${pill("__none", "No shop")}<button class="spill manage" id="manageShops">⚙ Shops</button></div>
     <div class="card" style="margin:0">
       <div class="mealhead"><strong>Need to buy</strong><button class="pill on" id="addBuy">＋ Add</button></div>
-      ${state.buyStore !== "all" ? `<p class="sub" style="text-align:left;margin:2px 0 8px">New items here auto-tag ${esc((storeById[state.buyStore] || {}).name || "")}.</p>` : ""}
-      <div id="buylist">${active.length ? active.map(rowActive).join("") : `<p class="sub">Nothing to buy.</p>`}
-        ${got.length ? `<div class="mut catlbl">Got it (${got.length})</div>${got.map((i) => `
-        <div class="mrow"><button class="ck on" data-got="${i.id}">✓</button><span style="flex:1;text-decoration:line-through;color:var(--muted)">${esc(i.name)}</span>
-          <button class="xbtn" data-del="${i.id}">✕</button></div>`).join("")}` : ""}
-      </div>
+      ${state.buyStore !== "all" && state.buyStore !== "__none" ? `<p class="sub" style="text-align:left;margin:2px 0 8px">New items here auto-tag ${esc((storeById[state.buyStore] || {}).name || "")}.</p>` : ""}
+      <p class="sub" style="text-align:left;margin:2px 0 10px">Tap an item to edit. Check it off when bought — it moves to “In the house”.</p>
+      <div id="buylist">${listHtml}</div>
     </div>`;
-  body.querySelectorAll(".spill").forEach((b) => b.onclick = () => { state.buyStore = b.dataset.s; localStorage.setItem("fh_buystore", state.buyStore); renderMeals(); });
+  body.querySelectorAll(".spill[data-s]").forEach((b) => b.onclick = () => { state.buyStore = b.dataset.s; localStorage.setItem("fh_buystore", state.buyStore); renderMeals(); });
+  document.getElementById("manageShops").onclick = () => manageShopsForm();
   document.getElementById("addBuy").onclick = () => mealForm("buy");
+  // check off = bought → move into the pantry ("In the house") and drop from the buy list
   body.querySelectorAll("[data-got]").forEach((b) => b.onclick = async () => {
     const it = items.find((x) => x.id === b.dataset.got);
-    const newGot = !it.got;
-    await updateShopping(b.dataset.got, { got: newGot });
-    if (newGot && it.source_pantry_id) await updatePantry(it.source_pantry_id, { status: "in" }); // restock the pantry when bought
+    if (!it) return;
+    if (it.source_pantry_id) await updatePantry(it.source_pantry_id, { status: "in" }); // restock existing pantry entry
+    else await createPantry({ name: it.name, category: "Pantry", status: "in", default_store_id: it.store_id || null });
+    await delShopping(it.id);
     renderMeals();
   });
+  body.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => { const it = items.find((x) => x.id === b.dataset.edit); if (it) editBuyItem(it, stores); });
   body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
     const it = items.find((x) => x.id === b.dataset.del);
     if (it && it.source_pantry_id) await updatePantry(it.source_pantry_id, { status: "in" });
@@ -2239,24 +2337,152 @@ async function renderBuySection(body, stores) {
   });
 }
 
+// Edit a buy-list item: rename, reassign shop (incl. "No shop" / new), or delete.
+function editBuyItem(item, stores) {
+  const overlay = document.createElement("div"); overlay.className = "modal-overlay";
+  overlay.innerHTML = `<form class="modal" id="ebForm">
+    <div class="modal-top"><button type="button" class="iconbtn" id="ebClose">✕</button><strong>Edit item</strong><button type="submit" id="ebSave">Save</button></div>
+    <div class="modal-body">
+      <label>Item</label><input id="eb_name" value="${esc(item.name)}" />
+      <label>Shop</label>
+      <select id="eb_store"><option value=""${!item.store_id ? " selected" : ""}>No shop</option>${stores.map((s) => `<option value="${s.id}"${item.store_id === s.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}<option value="__new">+ New shop…</option></select>
+      <input id="eb_newstore" placeholder="New shop name" style="display:none;margin-top:8px" />
+      <label class="inline"><input type="checkbox" id="eb_crit" ${item.critical ? "checked" : ""} /> Critical</label>
+      <label>Buy by (optional)</label><input id="eb_by" type="date" value="${esc(item.need_by || "")}" />
+      <div class="err" id="ebErr"></div>
+    </div>
+    <div class="modal-foot"><button type="button" class="danger" id="ebDelete">Delete item</button></div>
+  </form>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("ebClose").onclick = close;
+  const sel = document.getElementById("eb_store");
+  sel.onchange = () => { document.getElementById("eb_newstore").style.display = sel.value === "__new" ? "block" : "none"; };
+  document.getElementById("ebDelete").onclick = async () => { if (item.source_pantry_id) await updatePantry(item.source_pantry_id, { status: "in" }); await delShopping(item.id); close(); renderMeals(); };
+  document.getElementById("ebForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("ebErr"); err.textContent = "";
+    const name = (document.getElementById("eb_name").value || "").trim();
+    if (!name) { err.textContent = "Item name is required."; return; }
+    const save = document.getElementById("ebSave"); save.disabled = true; save.textContent = "Saving…";
+    let store_id = sel.value || null;
+    if (store_id === "__new") {
+      const nm = (document.getElementById("eb_newstore").value || "").trim();
+      if (!nm) { err.textContent = "Enter the new shop name."; save.disabled = false; save.textContent = "Save"; return; }
+      const sr = await createStore(nm, (state._stores || []).length);
+      if (sr.error) { err.textContent = sr.error.message; save.disabled = false; save.textContent = "Save"; return; }
+      store_id = sr.data.id;
+    }
+    const res = await updateShopping(item.id, { name, store_id, critical: document.getElementById("eb_crit").checked, need_by: document.getElementById("eb_by").value || null });
+    if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    close(); renderMeals();
+  });
+}
+
+// Manage shops: rename or delete. Deleting a shop leaves its items under "No shop".
+function manageShopsForm() {
+  const stores = state._stores || [];
+  const overlay = document.createElement("div"); overlay.className = "modal-overlay";
+  overlay.innerHTML = `<form class="modal" id="shForm">
+    <div class="modal-top"><button type="button" class="iconbtn" id="shClose">✕</button><strong>Manage shops</strong><span style="width:52px"></span></div>
+    <div class="modal-body">
+      <div id="shList">${stores.length ? stores.map((s) => `
+        <div class="mrow" data-id="${s.id}">
+          <input class="sh_name" data-id="${s.id}" value="${esc(s.name)}" style="flex:1" />
+          <button type="button" class="pill sh_save" data-id="${s.id}">Save</button>
+          <button type="button" class="xbtn sh_del" data-id="${s.id}" title="Delete shop">✕</button>
+        </div>`).join("") : `<p class="sub">No shops yet. Add one below.</p>`}</div>
+      <label style="margin-top:12px">Add a shop</label>
+      <div class="r_row"><input id="sh_new" placeholder="e.g. Whole Foods" style="flex:1" /><button type="button" class="pill on" id="sh_add">Add</button></div>
+      <div class="err" id="shErr"></div>
+    </div>
+  </form>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("shClose").onclick = close;
+  const err = document.getElementById("shErr");
+  overlay.querySelectorAll(".sh_save").forEach((b) => b.onclick = async () => {
+    const inp = overlay.querySelector(`.sh_name[data-id="${b.dataset.id}"]`);
+    const nm = (inp.value || "").trim(); if (!nm) { err.textContent = "Shop name can't be empty."; return; }
+    const r = await updateStore(b.dataset.id, { name: nm }); if (r.error) { err.textContent = r.error.message; return; }
+    state._stores = null; close(); renderMeals();
+  });
+  overlay.querySelectorAll(".sh_del").forEach((b) => b.onclick = async () => {
+    if (!confirm("Delete this shop? Its items stay on the list under “No shop”.")) return;
+    const r = await delStore(b.dataset.id); if (r.error) { err.textContent = r.error.message; return; }
+    if (state.buyStore === b.dataset.id) { state.buyStore = "all"; localStorage.setItem("fh_buystore", "all"); }
+    close(); renderMeals();
+  });
+  document.getElementById("sh_add").onclick = async () => {
+    const nm = (document.getElementById("sh_new").value || "").trim(); if (!nm) { err.textContent = "Enter a shop name."; return; }
+    const r = await createStore(nm, stores.length); if (r.error) { err.textContent = r.error.message; return; }
+    close(); renderMeals();
+  };
+}
+
 async function renderPlanSection(body) {
-  const ws = startOfWeek(state.viewDay || new Date());
-  const days = []; for (let i = 0; i < 7; i++) { const d = new Date(ws); d.setDate(d.getDate() + i); days.push(d); }
+  // rolling 7-day window starting from today
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const days = []; for (let i = 0; i < 7; i++) { const d = new Date(start); d.setDate(d.getDate() + i); days.push(d); }
   let meals = [];
   try { const r = await fetchMealsRange(dateKey(days[0]), dateKey(days[6])); if (!r.error) meals = r.data || []; } catch (e) {}
   const byDay = {}; for (const m of meals) (byDay[m.day] = byDay[m.day] || []).push(m);
   const todayKey = dateKey(new Date());
   body.innerHTML = `
     <div class="card" style="margin:0">
-      <div class="mealhead"><strong>This week's meals</strong><button class="pill on" id="addMeal">＋ Add meal</button></div>
-      <p class="sub" style="text-align:left;margin:2px 0 10px">Meals show up on the family calendar for that day.</p>
-      ${days.map((d, i) => { const k = dateKey(d); const dm = (byDay[k] || []);
-        return `<div class="planday"><div class="plandh${k === todayKey ? " today" : ""}">${WD[i]} ${d.getDate()}</div>
-          ${dm.length ? dm.map((m) => `<div class="mealrow"><span class="tagchip" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)}</span><span style="font-weight:600;flex:1">${esc(m.title)}</span><button class="xbtn" data-del="${m.id}">✕</button></div>`).join("") : `<span class="sub">— no meal</span>`}</div>`;
+      <div class="mealhead"><strong>Next 7 days</strong><span class="sub" style="margin:0">Tap a day to add</span></div>
+      <p class="sub" style="text-align:left;margin:2px 0 10px">Meals show up on the family calendar for that day. Tap a meal to edit it.</p>
+      ${days.map((d) => { const k = dateKey(d); const dm = (byDay[k] || []); const wd = WD[(d.getDay() + 6) % 7];
+        return `<div class="planday">
+          <button class="plandh dayadd${k === todayKey ? " today" : ""}" data-add="${k}">${wd} ${d.getDate()} ${MONTHS[d.getMonth()]}<span class="plus">＋</span></button>
+          ${dm.length ? dm.map((m) => `<div class="mealrow" data-edit="${m.id}"><span class="tagchip" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)}</span><span style="font-weight:600;flex:1">${esc(m.title)}</span><button class="xbtn" data-del="${m.id}">✕</button></div>`).join("") : `<span class="sub">— no meal</span>`}</div>`;
       }).join("")}
     </div>`;
-  document.getElementById("addMeal").onclick = () => mealForm("plan");
-  body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { await delMeal(b.dataset.del); renderMeals(); });
+  body.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => mealPlanForm(null, b.dataset.add));
+  body.querySelectorAll(".mealrow[data-edit]").forEach((r) => r.onclick = (e) => {
+    if (e.target.closest("[data-del]")) return;
+    const m = meals.find((x) => x.id === r.dataset.edit); if (m) mealPlanForm(m, m.day);
+  });
+  body.querySelectorAll("[data-del]").forEach((b) => b.onclick = async (e) => { e.stopPropagation(); await delMeal(b.dataset.del); renderMeals(); });
+}
+
+// Add or edit a planned meal (title, type, day) with delete when editing.
+function mealPlanForm(meal, presetDay) {
+  const isEdit = !!meal;
+  const day = meal ? meal.day : (presetDay || dateKey(new Date()));
+  const curType = meal ? meal.meal_type : "Dinner";
+  const typeOpt = (t) => `<option${curType === t ? " selected" : ""}>${t}</option>`;
+  const overlay = document.createElement("div"); overlay.className = "modal-overlay";
+  overlay.innerHTML = `<form class="modal" id="mpForm">
+    <div class="modal-top"><button type="button" class="iconbtn" id="mpClose">✕</button><strong>${isEdit ? "Edit meal" : "Add meal"}</strong><button type="submit" id="mpSave">Save</button></div>
+    <div class="modal-body">
+      <label>Meal</label><input id="mp_name" value="${esc(meal ? meal.title : "")}" placeholder="Pasta night" />
+      <label>Type</label><select id="mp_type">${["Dinner", "Lunch", "Breakfast"].map(typeOpt).join("")}</select>
+      <label>Day</label><input id="mp_day" type="date" value="${esc(day)}" />
+      <p class="hint">Shows on the family calendar for that day.</p>
+      <div class="err" id="mpErr"></div>
+    </div>
+    ${isEdit ? `<div class="modal-foot"><button type="button" class="danger" id="mpDelete">Delete meal</button></div>` : ""}
+  </form>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("mpClose").onclick = close;
+  const del = document.getElementById("mpDelete"); if (del) del.onclick = async () => { await delMeal(meal.id); close(); renderMeals(); };
+  document.getElementById("mpForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("mpErr"); err.textContent = "";
+    const name = (document.getElementById("mp_name").value || "").trim();
+    if (!name) { err.textContent = "Meal name is required."; return; }
+    const dayVal = document.getElementById("mp_day").value; if (!dayVal) { err.textContent = "Pick a day."; return; }
+    const save = document.getElementById("mpSave"); save.disabled = true; save.textContent = "Saving…";
+    const payload = { title: name, meal_type: document.getElementById("mp_type").value, day: dayVal };
+    const res = isEdit ? await updateMeal(meal.id, payload) : await createMeal(payload);
+    if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    close(); renderMeals();
+  });
 }
 
 function mealForm(kind) {
