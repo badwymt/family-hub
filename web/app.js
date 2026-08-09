@@ -952,7 +952,10 @@ async function renderCalendar() {
     renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue);
     if (isWall()) addDaySidebar(body, byDay, mealsByDay, choreCellsByDay);
   }
-  else if (view === "week") renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay);
+  else if (view === "week") {
+    if (isWall()) renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, choreCellsByDay);
+    else renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay);
+  }
   else if (view === "tasks") renderTasksView(body);
   else renderMonthBody(body, weeks, byDay, todayKey, taskCellsByDay);
 }
@@ -1171,6 +1174,124 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
 }
 
 // ---- week view: 7 day columns with event chips -----------------------------
+// ============================================================================
+// W3 — WEEK: a real time grid on the wall.
+// ----------------------------------------------------------------------------
+// 7 columns x hour rows, all-day strip pinned above the scroller, now-line, events
+// absolutely positioned by start/duration — the same geometry renderDayBody uses,
+// applied seven times. Explicitly NOT copying Skylight's 4-events-per-cell cap: a
+// time grid doesn't need one, so overlaps split the column instead of hiding.
+//
+// The PHONE keeps the existing chip columns. A 7-column hour grid at 390px is
+// unreadable, and "the phone is unchanged" is an invariant, not a nicety.
+// ============================================================================
+const WK_START = 7, WK_END = 21, WK_ROW = 56;
+
+function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, choreCellsByDay) {
+  const ws = startOfWeek(state.viewDay);
+  const todayKey = dateKey(new Date());
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(ws); d.setDate(d.getDate() + i); return d; });
+
+  const head = days.map((d, i) => {
+    const k = dateKey(d), wknd = i >= 5;
+    return `<div class="dh${wknd ? " wknd" : ""}${k === todayKey ? " today" : ""}" data-k="${k}">
+      <div class="dhw">${WD[i]}</div><div class="dhn">${d.getDate()}</div></div>`;
+  }).join("");
+
+  const allday = days.map((d, i) => {
+    const k = dateKey(d);
+    const chips = (byDay[k] || []).filter((x) => x.all_day).map((x) =>
+      `<span class="adchip" data-iid="${esc(x.iid)}" style="background:${tintOf(x.member_id)};border-left:3px solid ${inkOf(x.member_id)}">${esc(x.title)}</span>`).join("");
+    const meals = ((mealsByDay && mealsByDay[k]) || []).map((m) =>
+      `<span class="adchip mealwk" data-mid="${esc(m.id)}" style="background:${MEAL_COLOR}">🍴 ${esc(m.title)}</span>`).join("");
+    return `<div class="adcell${i >= 5 ? " wknd" : ""}">${chips}${meals}</div>`;
+  }).join("");
+
+  let gutter = "";
+  for (let h = WK_START; h <= WK_END; h++) {
+    const hr = (h % 12) || 12, ap = h < 12 ? "AM" : "PM";
+    gutter += `<div class="hr"><span class="hrt">${hr} ${ap}</span></div>`;
+  }
+
+  const nowH = hourFloat(new Date().toISOString());
+  const cols = days.map((d, di) => {
+    const k = dateKey(d), isToday = k === todayKey;
+    const timed = (byDay[k] || []).filter((x) => !x.all_day);
+    timed.forEach((e) => { e._s = hourFloat(e.starts_at); e._e = e.ends_at ? hourFloat(e.ends_at) : e._s + 1; });
+    timed.sort((a, b) => a._s - b._s);
+    // same cluster/column packing as the day view
+    const layout = (cl) => {
+      const ends = [];
+      cl.forEach((e) => { let c = 0; for (; c < ends.length; c++) if (e._s >= ends[c] - 1e-4) break; e._col = c; ends[c] = e._e; });
+      cl.forEach((e) => (e._cols = ends.length));
+    };
+    let cluster = [], cEnd = -1;
+    timed.forEach((e) => { if (cluster.length && e._s >= cEnd - 1e-4) { layout(cluster); cluster = []; cEnd = -1; } cluster.push(e); cEnd = Math.max(cEnd, e._e); });
+    if (cluster.length) layout(cluster);
+
+    let blocks = "", hidden = 0;
+    for (const e of timed) {
+      const n = e._cols || 1, ci = e._col || 0;
+      // 3+ overlaps: show two, collapse the rest to a +N chip rather than hiding them
+      if (n >= 3 && ci >= 2) { hidden++; continue; }
+      const shown = n >= 3 ? 2 : n;
+      const top = (e._s - WK_START) * WK_ROW + 1;
+      const height = Math.max(26, (e._e - e._s) * WK_ROW - 3);
+      const leftPct = (ci / shown) * 100, widPct = (1 / shown) * 100;
+      blocks += `<div class="wev" data-iid="${esc(e.iid)}"
+        style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 3px);width:calc(${widPct}% - 6px);
+               background:${tintOf(e.member_id)};border-left-color:${inkOf(e.member_id)}">
+        <span class="wti">${esc(e.title)}</span><span class="wtm">${fmtTime(e.starts_at)}</span>
+        ${e.member_id ? `<span class="wwho" style="background:${inkOf(e.member_id)}">${initialOf(e.member_id)}</span>` : ""}</div>`;
+    }
+    if (hidden) blocks += `<div class="wmore" data-k="${k}">+${hidden}</div>`;
+
+    // chores + calendar to-dos as dashed inline pills at their due time
+    const cells = ((taskCellsByDay && taskCellsByDay[k]) || []).concat((choreCellsByDay && choreCellsByDay[k]) || []);
+    for (const c of cells) {
+      if (!c.due_time) continue;
+      const p = c.due_time.split(":"); const th = (+p[0]) + ((+p[1]) || 0) / 60;
+      if (th < WK_START || th > WK_END) continue;
+      blocks += `<div class="wev wtask${c.done ? " done" : ""}" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}"
+        style="top:${(th - WK_START) * WK_ROW + 1}px;height:26px;border-left-color:${inkOf(c.task.assigned_to)}">
+        <span class="wti">${c.done ? "✓" : "☐"} ${esc(c.task.title)}</span></div>`;
+    }
+
+    let rows = ""; for (let h = WK_START; h <= WK_END; h++) rows += `<div class="hr"></div>`;
+    const nl = (isToday && nowH >= WK_START && nowH <= WK_END)
+      ? `<div class="wnow" style="top:${(nowH - WK_START) * WK_ROW}px"></div>` : "";
+    return `<div class="wcol${di >= 5 ? " wknd" : ""}">${rows}${blocks}${nl}</div>`;
+  }).join("");
+
+  body.innerHTML = `
+    <div class="wk">
+      <div class="wkhead"><div class="wkgut"></div>${head}</div>
+      <div class="wkallday"><div class="wkgut lbl">all-day</div>${allday}</div>
+      <div class="wkscroll" id="wkscroll"><div class="wkgrid"><div class="wkgut">${gutter}</div>${cols}</div></div>
+    </div>`;
+
+  const sc = document.getElementById("wkscroll");
+  if (sc) sc.scrollTop = (8 - WK_START) * WK_ROW;
+
+  body.querySelectorAll(".wev:not(.wtask), .adchip:not(.mealwk)").forEach((b) => {
+    b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
+  });
+  body.querySelectorAll(".wtask").forEach((b) => {
+    b.onclick = () => {
+      const all = Object.values(taskCellsByDay || {}).flat().concat(Object.values(choreCellsByDay || {}).flat());
+      const c = all.find((x) => x.task.id === b.dataset.tid && String(x.occ ?? "") === b.dataset.occ);
+      if (!c) return;
+      if (c.task.kind === "task") openTaskItemForm(c.task, c.occ ?? null); else { state.choreMember = null; go("#/tasks"); }
+    };
+  });
+  body.querySelectorAll(".mealwk").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); go("#/meals"); };
+  });
+  body.querySelectorAll(".dh, .wmore").forEach((h) => {
+    h.onclick = () => { state.viewDay = new Date(h.dataset.k + "T00:00"); state.calView = "day"; renderCalendar(); };
+  });
+}
+
 function renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay) {
   const ws = startOfWeek(state.viewDay);
   const todayKey = dateKey(new Date());

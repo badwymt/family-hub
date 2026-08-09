@@ -651,3 +651,49 @@ button.finrow:hover{ border-color:var(--accent); }
   .planweek .plandh{ min-height:44px; }
   .planweek .mealrow{ flex-wrap:wrap; }
 }
+
+/* ==========================================================================
+   W3 — WEEK time grid (wall only; the phone keeps its chip columns)
+   ========================================================================== */
+@media (min-width:1000px) and (orientation:landscape){
+  .wk{ display:flex; flex-direction:column; height:100%; min-height:0; }
+  .wkhead,.wkallday{ display:grid; grid-template-columns:52px repeat(7,1fr); background:#FDFAF5;
+    border-bottom:1px solid var(--line); }
+  .wkgut{ position:relative; }
+  .wkallday .lbl{ font-size:9.5px; color:var(--muted); font-weight:700; align-self:center;
+    text-align:right; padding-right:6px; }
+  .dh{ padding:6px 4px; text-align:center; border-left:1px solid var(--line); cursor:pointer; }
+  .dh.wknd{ background:#F7F1E6; }
+  .dhw{ font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+  .dhn{ font-size:17px; font-weight:700; line-height:1.15; }
+  .dh.today .dhn{ background:var(--accent); color:#fff; border-radius:50%; width:26px; height:26px;
+    display:inline-grid; place-items:center; font-size:15px; }
+  .wkallday{ min-height:26px; }
+  .adcell{ border-left:1px solid var(--line); padding:3px; min-height:26px; }
+  .adcell.wknd{ background:#F7F1E6; }
+  .adchip{ display:block; font-size:10.5px; font-weight:700; border-radius:6px; padding:2px 6px;
+    margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  .wkscroll{ flex:1; overflow-y:auto; min-height:0; position:relative; }
+  .wkgrid{ display:grid; grid-template-columns:52px repeat(7,1fr); position:relative; padding-top:9px; }
+  .wkgrid .hr{ height:56px; border-top:1px solid #F2EADC; position:relative; }
+  .wkgut .hr{ border-top:1px solid var(--line); }
+  .hrt{ position:absolute; top:-8px; right:6px; font-size:10.5px; color:var(--muted); font-weight:600; }
+  .wcol{ position:relative; border-left:1px solid var(--line); }
+  .wcol.wknd{ background:#FAF5EC; }
+  .wev{ position:absolute; border-radius:8px; padding:4px 6px; overflow:hidden; cursor:pointer;
+    border-left:3px solid; font-size:11px; line-height:1.25; background:var(--panel2); }
+  .wti{ display:block; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .wtm{ display:block; font-size:10px; opacity:.78; }
+  .wwho{ position:absolute; right:4px; bottom:3px; width:15px; height:15px; border-radius:50%;
+    font-size:9px; color:#fff; display:grid; place-items:center; font-weight:800; }
+  /* chores sit in the right half so they never blanket an event at the same hour */
+  .wev.wtask{ left:auto; right:3px; width:calc(52% - 3px); background:#fff;
+    border:1px dashed var(--line); border-left:3px solid; z-index:2; }
+  .wev.wtask.done{ opacity:.5; }
+  .wev.wtask.done .wti{ text-decoration:line-through; }
+  .wmore{ position:absolute; right:3px; top:3px; font-size:10px; font-weight:800; color:var(--muted);
+    background:#fff; border:1px solid var(--line); border-radius:6px; padding:1px 5px; cursor:pointer; z-index:3; }
+  .wnow{ position:absolute; left:0; right:0; border-top:2px solid var(--accent); z-index:5; }
+  .wnow::before{ content:""; position:absolute; left:-4px; top:-5px; width:8px; height:8px;
+    border-radius:50%; background:var(--accent); }
+}
