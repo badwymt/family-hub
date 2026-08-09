@@ -44,8 +44,10 @@ const fmtDue = (d) => {
 
 // ---- current member (localStorage = identity, not auth) --------------------
 const getMember = () => { try { return JSON.parse(localStorage.getItem(MEMBER_KEY)); } catch { return null; } };
-const setMember = (m) => localStorage.setItem(MEMBER_KEY, JSON.stringify(m));
-const clearMember = () => localStorage.removeItem(MEMBER_KEY);
+// W0.1: state.choreMember is in-memory and MUST follow identity, or the wall (which
+// never reloads) keeps rendering the previous person's chore list after a switch.
+const setMember = (m) => { localStorage.setItem(MEMBER_KEY, JSON.stringify(m)); state.choreMember = m.id; };
+const clearMember = () => { localStorage.removeItem(MEMBER_KEY); state.choreMember = null; };
 const go = (route) => { if (location.hash !== route) location.hash = route; else render(); };
 
 // ---- offline write queue (optimistic UI; replays through RPCs on reconnect) -
@@ -63,6 +65,20 @@ function enqueueCompletion(task, occ, earner) {
   queueSet(q);
   state.pending = state.pending || new Set();
   state.pending.add(`${task.id}|${occ ?? ""}`);
+}
+// W0.3: cancel a completion that is still queued locally (never sent to the server).
+// This is the only undo that is safe before the uncomplete_task RPC lands in W4 —
+// nothing has touched star_ledger or star_balance yet, so nothing can drift.
+// Returns true if a queued op was removed.
+function dequeueCompletion(taskId, occ) {
+  const cell = `${taskId}|${occ ?? ""}`;
+  const q = queueGet();
+  const i = q.findIndex((o) => o.type === "complete_task" && o.task_id === taskId && (o.occurrence_date ?? "") === (occ ?? ""));
+  if (i < 0) return false;
+  q.splice(i, 1); queueSet(q);
+  state.pending = state.pending || new Set();
+  state.pending.delete(cell);
+  return true;
 }
 let flushing = false;
 async function flushQueue() {
@@ -165,19 +181,45 @@ async function render() {
 
     const route = location.hash || "#/";
     const needMember = (fn) => { const m = getMember(); if (!m) return go("#/picker"); state.member = m; return fn(); };
+    // W0.4: a kid profile can only reach Chores. UI gate, not a security boundary —
+    // it's a kitchen wall. The real gate (PIN) lands in W4.
+    const kidBlocked = (fn) => needMember(() => (state.member.is_child ? go("#/tasks") : fn()));
     if (route.startsWith("#/hub")) return needMember(viewHub);
     if (route.startsWith("#/home")) return needMember(viewCalendar);
     if (route.startsWith("#/tasks")) return needMember(viewTasks);
     if (route.startsWith("#/stars") || route.startsWith("#/rewards")) return go("#/tasks");
-    if (route.startsWith("#/finance")) return needMember(viewFinance);
-    if (route.startsWith("#/meals")) return needMember(viewMeals);
-    if (route.startsWith("#/family")) return viewFamily();
+    if (route.startsWith("#/finance")) return kidBlocked(viewFinance);
+    if (route.startsWith("#/meals")) return kidBlocked(viewMeals);
+    if (route.startsWith("#/family")) { const m = getMember(); if (m && m.is_child) return go("#/tasks"); return viewFamily(); }
     return viewPicker();
   } finally {
     rendering = false;
     ensureHomeFab();
+    kioskIdleKick();
   }
 }
+
+// ---- kiosk idle reset ------------------------------------------------------
+// W0.1: the wall never reloads, so a stale identity would persist forever. Dropping
+// back to the profile picker after a quiet spell makes that whole class of bug
+// structurally impossible. Suspended while a modal is open so a half-typed form is
+// never discarded. (W1 retargets this to the wall's Calendar instead of the picker.)
+const KIOSK_IDLE_MS = 30000;
+let kioskTimer = null;
+function kioskIdleKick() {
+  clearTimeout(kioskTimer);
+  const h = location.hash || "";
+  const armed = ["#/hub", "#/home", "#/tasks", "#/finance", "#/meals"].some((r) => h.startsWith(r));
+  if (!armed || !getMember()) return;
+  kioskTimer = setTimeout(() => {
+    if (document.querySelector(".modal-overlay")) return kioskIdleKick(); // editing — wait
+    clearMember();
+    go("#/picker");
+  }, KIOSK_IDLE_MS);
+}
+["pointerdown", "keydown", "wheel"].forEach((ev) =>
+  window.addEventListener(ev, kioskIdleKick, { passive: true, capture: true })
+);
 
 // Persistent floating Home button: shown on the four section pages, hidden elsewhere.
 function ensureHomeFab() {
@@ -198,6 +240,7 @@ function ensureHomeFab() {
 async function viewHub() {
   await loadContext();
   const m = state.member || {};
+  const kid = !!m.is_child;                                     // W0.4
   const tile = (route, emoji, label) => `<button class="hubtile" data-r="${route}"><span class="he">${emoji}</span><span>${esc(label)}</span></button>`;
   el.innerHTML = `
     <header class="topbar">
@@ -208,19 +251,21 @@ async function viewHub() {
     <section class="content">
       <div class="hubhi">${avatarHTML(m, "avatar sm")}<span>Hi ${esc(m.name || "there")} 👋</span></div>
       <div class="hubgrid">
-        ${tile("#/home", "📅", "Calendar")}
+        ${kid ? "" : tile("#/home", "📅", "Calendar")}
         ${tile("#/tasks", "✅", "Chores")}
-        ${tile("#/finance", "💰", "Finance")}
-        ${tile("#/meals", "🍴", "Meals")}
+        ${kid ? "" : tile("#/finance", "💰", "Finance")}
+        ${kid ? "" : tile("#/meals", "🍴", "Meals")}
       </div>
-      <div class="row" style="gap:14px;justify-content:center;margin-top:24px">
+      ${kid ? "" : `<div class="row" style="gap:14px;justify-content:center;margin-top:24px">
         <button class="link" id="manage">⚙ Manage family</button>
         <button class="link" id="signout">Sign out</button>
-      </div>
+      </div>`}
     </section>`;
   document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
-  document.getElementById("manage").onclick = () => go("#/family");
-  document.getElementById("signout").onclick = signOut;
+  if (!kid) {
+    document.getElementById("manage").onclick = () => go("#/family");
+    document.getElementById("signout").onclick = signOut;
+  }
   el.querySelectorAll(".hubtile").forEach((b) => { b.onclick = () => go(b.dataset.r); });
 }
 window.addEventListener("hashchange", render);
@@ -1266,15 +1311,15 @@ function taskCells(tasks, doneMap, winStart, winEnd) {
   }
   return out;
 }
-function overdueCells(tasks, doneMap, todayKey) {
-  const lookback = new Date(); lookback.setHours(0, 0, 0, 0); lookback.setDate(lookback.getDate() - 60);
+function overdueCells(tasks, doneMap, todayKey, lookbackDays = 60) {
+  const lookback = new Date(); lookback.setHours(0, 0, 0, 0); lookback.setDate(lookback.getDate() - lookbackDays);
   const today = new Date(todayKey + "T00:00");
   const out = [];
   for (const t of tasks) {
     const occs = t.rrule ? taskOccurrences(t, lookback, today) : (t.due_date && t.due_date < todayKey ? [null] : []);
     for (const occ of occs) {
       const dueKey = occ ?? t.due_date;
-      if (!dueKey || dueKey >= todayKey) continue;
+      if (!dueKey || dueKey >= todayKey || dueKey < dateKey(lookback)) continue;
       const cell = `${t.id}|${occ ?? ""}`;
       if (doneMap.has(cell) || (state.pending && state.pending.has(cell))) continue;
       out.push({ task: t, dueKey, occ, due_time: t.due_time, done: false });
@@ -1413,17 +1458,29 @@ function taskOccurrences(task, winStart, winEnd) {
 async function viewTasks() {
   await loadContext();
   if (state.choreMember && !state.membersById[state.choreMember]) state.choreMember = null;
+  // W0.1: chore focus is scoped to the current identity. Re-deriving it whenever the
+  // identity changes means a stale focus cannot survive a profile switch by ANY route,
+  // not just the one that goes through setMember().
+  if (state.choreScope !== state.member.id) { state.choreScope = state.member.id; state.choreMember = state.member.id; }
+  if (!state.choreMember) state.choreMember = state.member.id;   // always land on yourself
   await renderChores();
   subscribeRealtime(["tasks", "task_completions", "family_members", "rewards", "redemptions", "star_ledger"], () => renderChores());
 }
 async function renderChores() { return state.choreMember ? renderChoreMember() : renderChoreHome(); }
 
+// W0.2: TODAY ONLY. The old -14/+28 window expanded one daily chore into 42 rows,
+// which is unreadable for anyone and actively harmful for a 5-year-old. Anything
+// overdue goes in the collapsed "Missed" group, parents only.
 const choreWindow = () => {
-  const winStart = new Date(); winStart.setHours(0, 0, 0, 0); winStart.setDate(winStart.getDate() - 14);
-  const winEnd = new Date(); winEnd.setHours(0, 0, 0, 0); winEnd.setDate(winEnd.getDate() + 28);
+  const winStart = new Date(); winStart.setHours(0, 0, 0, 0);
+  const winEnd = new Date(winStart); winEnd.setDate(winEnd.getDate() + 1);
   return { winStart, winEnd };
 };
-const todaysOccs = (t, todayKey, ws, we) => (!t.rrule ? (t.due_date === todayKey ? [null] : []) : taskOccurrences(t, ws, we));
+const CHORE_MISSED_DAYS = 3;
+// Occurrences of a chore due today. An undated one-off is treated as "today" so it
+// stays doable — and so the avatar-grid counts agree with the member page rows.
+const todaysOccs = (t, todayKey, ws, we) =>
+  (!t.rrule ? ((!t.due_date || t.due_date === todayKey) ? [null] : []) : taskOccurrences(t, ws, we));
 
 function celebrate() {
   const es = ["🎉", "⭐", "🎊", "🌟", "✨", "🥳"];
@@ -1476,10 +1533,10 @@ async function renderChoreHome() {
             <span class="ctprog">${prog}</span></button>`;
         }).join("")}
       </div>
-      <div class="row"><button class="link" id="signout">Sign out</button></div>
+      ${state.member.is_child ? "" : `<div class="row"><button class="link" id="signout">Sign out</button></div>`}
     </section>`;
   document.getElementById("switch").onclick = () => { clearMember(); go("#/picker"); };
-  document.getElementById("signout").onclick = signOut;
+  if (!state.member.is_child) document.getElementById("signout").onclick = signOut;
   el.querySelectorAll(".choretile").forEach((b) => { b.onclick = () => { state.choreMember = b.dataset.m; renderChores(); }; });
 }
 
@@ -1502,67 +1559,91 @@ async function renderChoreMember() {
   const bal = (board.find((x) => x.id === mid) || {}).star_balance || 0;
   const rewardsById = Object.fromEntries(rewards.map((r) => [r.id, r]));
 
+  const isKidView = !!state.member.is_child;    // W0.4 — the VIEWER, not the member on screen
+  const cellOf = (t, occ) => `${t.id}|${occ ?? ""}`;
+  const mkRow = (t, occ, dueKey) => {
+    const cell = cellOf(t, occ);
+    return { task: t, occ, dueKey, isDone: doneMap.has(cell) || state.pending.has(cell),
+             isPending: state.pending.has(cell) && !doneMap.has(cell) };
+  };
+
+  // W0.2 — today only.
   const rows = [];
-  for (const t of tasks) {
-    for (const occ of taskOccurrences(t, winStart, winEnd)) {
-      const cell = `${t.id}|${occ ?? ""}`;
-      const isDone = doneMap.has(cell) || state.pending.has(cell);
-      rows.push({ task: t, occ, dueKey: occ ?? t.due_date ?? null, isDone, isPending: state.pending.has(cell) && !doneMap.has(cell) });
-    }
-  }
-  rows.sort((a, b) => (a.isDone - b.isDone) || (a.dueKey || "9999").localeCompare(b.dueKey || "9999") || a.task.title.localeCompare(b.task.title));
+  for (const t of tasks) for (const occ of todaysOccs(t, todayKey, winStart, winEnd)) rows.push(mkRow(t, occ, occ ?? t.due_date ?? todayKey));
+  rows.sort((a, b) => (a.isDone - b.isDone) || String(a.task.due_time || "99").localeCompare(String(b.task.due_time || "99")) || a.task.title.localeCompare(b.task.title));
+
+  // W0.2 — a backlog is for parents to triage, never something a 5-year-old is shown.
+  const missed = isKidView ? [] : overdueCells(tasks, doneMap, todayKey, CHORE_MISSED_DAYS)
+    .map((c) => mkRow(c.task, c.occ, c.dueKey))
+    .sort((a, b) => String(b.dueKey).localeCompare(String(a.dueKey)));
+
+  const rowHTML = (r, i, sec) => {
+    const t = r.task;
+    const star = t.star_reward > 0 ? `<span class="taskstar">⭐${t.star_reward}</span>` : "";
+    const due = sec === "m" && r.dueKey ? `<span class="taskdue">${esc(fmtDue(r.dueKey))}</span>` : "";
+    const rep = t.rrule ? " 🔁" : "";
+    const pend = r.isPending ? ` <span class="pendmark" title="Saved locally — will sync when online">⏳</span>` : "";
+    // W0.3 — ONE tap target per row: the whole row. .check is a glyph, not a button.
+    return `<div class="task${r.isDone ? " done" : ""}">
+      <span class="check${r.isDone ? " on" : ""}" aria-hidden="true">${r.isDone ? "✓" : ""}</span>
+      <button class="taskmain" data-i="${i}" data-sec="${sec}" aria-pressed="${r.isDone}">
+        <span class="tasktitle">${esc(t.title)}${rep}${pend}</span>
+        <span class="taskmeta">${star}${due}</span>
+      </button>
+      ${isKidView ? "" : `<button class="taskedit" data-i="${i}" data-sec="${sec}" title="Edit chore" aria-label="Edit ${esc(t.title)}">✏️</button>`}
+    </div>`;
+  };
 
   el.innerHTML = `
     <header class="topbar">
-      <button class="iconbtn" id="back" title="Back">‹</button>
+      ${isKidView ? `<span style="width:36px"></span>` : `<button class="iconbtn" id="back" title="Back">‹</button>`}
       <h1>${avatarHTML(m, "favatar")} ${esc(m.name)}</h1>
-      <button id="addTask">+ Chore</button>
+      ${isKidView ? `<span style="width:36px"></span>` : `<button id="addTask">+ Chore</button>`}
     </header>
     <section class="content">
       ${navTabs("tasks")}
       ${err ? `<p class="err">${esc(err)}</p>` : ""}
       <div class="balcard" style="padding:18px;margin-bottom:16px"><div class="balnum" style="font-size:44px">${bal}</div><div class="ballabel">⭐ ${esc(m.name)}'s stars</div></div>
-      <h4 class="lbh">Chores</h4>
+      <h4 class="lbh">Today</h4>
       <div class="tasklist" id="tasklist"></div>
+      ${missed.length ? `<details class="missed"><summary>Missed · ${missed.length}</summary><div class="tasklist" id="missedlist"></div></details>` : ""}
       <h4 class="lbh" style="margin-top:20px">🎁 Rewards bank</h4>
       <div class="rewardbank" id="rewardbank"></div>
-      <button class="ghost" id="addReward" style="margin-top:12px">+ Create reward</button>
+      ${isKidView ? "" : `<button class="ghost" id="addReward" style="margin-top:12px">+ Create reward</button>`}
       ${reds.length ? `<h4 class="lbh" style="margin-top:20px">History</h4><div class="redlist" id="redlist"></div>` : ""}
-      <div class="row"><button class="link" id="signout">Sign out</button></div>
+      ${isKidView ? "" : `<div class="row"><button class="link" id="signout">Sign out</button></div>`}
     </section>`;
-  document.getElementById("back").onclick = () => { state.choreMember = null; renderChores(); };
-  document.getElementById("signout").onclick = signOut;
-  document.getElementById("addTask").onclick = () => openTaskForm(null);
-  document.getElementById("addReward").onclick = () => openRewardForm(null);
+  if (!isKidView) {
+    document.getElementById("back").onclick = () => { state.choreMember = null; renderChores(); };
+    document.getElementById("signout").onclick = signOut;
+    document.getElementById("addTask").onclick = () => openTaskForm(null);
+    document.getElementById("addReward").onclick = () => openRewardForm(null);
+  }
 
   const list = document.getElementById("tasklist");
-  if (!rows.length) list.innerHTML = `<p class="sub">No chores yet — add one.</p>`;
-  else list.innerHTML = rows.map((r, i) => {
-    const t = r.task;
-    const star = t.star_reward > 0 ? `<span class="taskstar">⭐${t.star_reward}</span>` : "";
-    const due = r.dueKey ? `<span class="taskdue">${esc(fmtDue(r.dueKey))}</span>` : "";
-    const rep = t.rrule ? " 🔁" : "";
-    const pend = r.isPending ? ` <span class="pendmark" title="Saved locally — will sync when online">⏳</span>` : "";
-    return `<div class="task${r.isDone ? " done" : ""}">
-      <button class="check${r.isDone ? " on" : ""}" data-i="${i}" aria-label="complete">${r.isDone ? "✓" : ""}</button>
-      <button class="taskmain" data-i="${i}">
-        <span class="tasktitle">${esc(t.title)}${rep}${pend}</span>
-        <span class="taskmeta">${star}${due}</span>
-      </button></div>`;
-  }).join("");
-  list.querySelectorAll(".check").forEach((b) => {
+  list.innerHTML = rows.length ? rows.map((r, i) => rowHTML(r, i, "t")).join("")
+    : `<p class="sub">${isKidView ? "Nothing to do today 🎉" : "No chores today — add one."}</p>`;
+  const mlist = document.getElementById("missedlist");
+  if (mlist) mlist.innerHTML = missed.map((r, i) => rowHTML(r, i, "m")).join("");
+
+  const pick = (b) => (b.dataset.sec === "m" ? missed : rows)[+b.dataset.i];
+  el.querySelectorAll(".taskmain").forEach((b) => {
     b.onclick = () => {
-      const r = rows[+b.dataset.i];
-      if (r.isDone) return;
+      const r = pick(b);
+      if (r.isDone) {
+        // Safe undo only: cancel a completion still sitting in the local queue. A
+        // server-side undo needs the uncomplete_task RPC (W4.2) or stars orphan.
+        if (dequeueCompletion(r.task.id, r.occ)) renderChores();
+        return;
+      }
       enqueueCompletion(r.task, r.occ, mid);
       if (r.task.star_reward > 0) starBurst(r.task.star_reward);
-      const todayRows = rows.filter((x) => x.dueKey === todayKey);
-      if (todayRows.length && todayRows.every((x) => x.isDone || x === r)) celebrate();
+      if (b.dataset.sec === "t" && rows.length && rows.every((x) => x.isDone || x === r)) celebrate();
       renderChores();
       flushQueue();
     };
   });
-  list.querySelectorAll(".taskmain").forEach((b) => { b.onclick = () => openTaskForm(rows[+b.dataset.i].task); });
+  el.querySelectorAll(".taskedit").forEach((b) => { b.onclick = () => openTaskForm(pick(b).task); });
 
   const rb = document.getElementById("rewardbank");
   rb.innerHTML = rewards.length ? rewards.map((r) => {
@@ -1573,9 +1654,9 @@ async function renderChoreMember() {
         ? `<button class="pill-redeem" data-id="${r.id}">Redeem · −${r.star_cost}⭐</button>`
         : `<span class="rwcostmut">${r.star_cost}⭐</span>`}</div>
       <div class="lbbar"><i style="width:${pct}%;background:var(--star)"></i></div>
-      <div class="rwbnote"><span>${ok ? "Ready to redeem 🎉" : (r.star_cost - bal) + " stars to go"}</span><button class="link rwedit" data-id="${r.id}">edit</button></div>
+      <div class="rwbnote"><span>${ok ? "Ready to redeem 🎉" : (r.star_cost - bal) + " stars to go"}</span>${isKidView ? "" : `<button class="link rwedit" data-id="${r.id}">edit</button>`}</div>
     </div>`;
-  }).join("") : `<p class="sub">No rewards yet — create one below.</p>`;
+  }).join("") : `<p class="sub">${isKidView ? "No rewards yet." : "No rewards yet — create one below."}</p>`;
   rb.querySelectorAll(".pill-redeem").forEach((b) => {
     b.onclick = async () => {
       const r = rewardsById[b.dataset.id];
