@@ -792,7 +792,12 @@ html.kidmode body{ display:block; }
 .kgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:24px; align-content:start; }
 /* pre-reader: a fixed 2x3 so cards are big, not a wall of small ones. auto-fill would
    lay six 180px tracks and leave two lonely cards at the minimum size. */
-.kidwrap.pre .kgrid{ grid-template-columns:repeat(3,1fr); }
+/* 3-up on the wall, 2-up in the hand: 3 columns at 390px gives 118px cards, well
+   under the 45mm a 5-year-old needs. */
+.kidwrap.pre .kgrid{ grid-template-columns:repeat(2,1fr); }
+@media (min-width:1000px) and (orientation:landscape){
+  .kidwrap.pre .kgrid{ grid-template-columns:repeat(3,1fr); }
+}
 .kidwrap.reader .kgrid{ grid-template-columns:repeat(4,1fr); }
 .kcard{ position:relative; }
 /* the whole card is the target; hit region padded ~5mm past the visual edge */
@@ -1008,4 +1013,53 @@ html.kidmode body{ display:block; }
   #mealbody .mrow,#mealbody .catlbl,#mealbody .planday{ break-inside:avoid; }
   #mealbody .planweek{ columns:auto; }
   .lists .lcard{ max-width:none; }
+}
+
+/* ==========================================================================
+   W14 — the phone is a first-class surface, not a fallback.
+   Same destinations as the wall rail, rendered as a bottom tab bar; same chore
+   semantics (bands, streak, bonus, up-for-grabs, parent queue).
+   ========================================================================== */
+.phonetabs{ position:fixed; left:0; right:0; bottom:0; z-index:45; display:flex;
+  background:var(--panel); border-top:1px solid var(--line);
+  padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  box-shadow:0 -2px 12px rgba(44,55,48,.06); }
+.ptab{ flex:1; min-width:0; background:none; border:0; padding:6px 2px; border-radius:12px;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  color:var(--muted); font-weight:700; font-size:10.5px; min-height:52px; }
+.ptab .pico{ font-size:20px; line-height:1; }
+.ptab.on{ color:var(--accent); background:var(--accent-soft); }
+.ptab.soon{ opacity:.4; }
+.plbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+/* keep the last row clear of the bar */
+html.hastabs .content{ padding-bottom:calc(74px + env(safe-area-inset-bottom)); }
+html.hastabs .modal{ padding-bottom:calc(env(safe-area-inset-bottom) + 8px); }
+
+/* chore progress on the phone's member chips */
+.mfrac{ margin-left:6px; font-size:11px; font-weight:800; color:var(--muted);
+  font-variant-numeric:tabular-nums; }
+.mchip.on .mfrac{ color:inherit; opacity:.85; }
+
+/* the phone chore list gains the wall's semantics */
+.tasklist .cgroup{ font-size:10px; font-weight:800; color:var(--muted); text-transform:uppercase;
+  letter-spacing:.6px; margin:14px 0 6px; }
+.tasklist .cico{ margin-right:7px; font-size:16px; vertical-align:-2px; }
+.tasklist .cico img{ width:22px; height:22px; border-radius:5px; object-fit:cover;
+  display:inline-block; vertical-align:-5px; }
+.taskstar.bonus{ color:#fff; background:var(--star); border-radius:999px; padding:2px 8px; font-weight:800; }
+.tasklist.grabs .task{ border-style:dashed; }
+
+@media (min-width:1000px) and (orientation:landscape){
+  .phonetabs{ display:none !important; }
+  html.hastabs .content{ padding-bottom:16px; }
+}
+
+/* W14: reward edit + create on the wall (there was no way to fix a price) */
+@media (min-width:1000px) and (orientation:landscape){
+  .rwedit{ flex:0 0 auto; width:40px; min-height:44px; padding:0; border-radius:10px;
+    background:transparent; border:1px solid var(--line); color:var(--muted); font-size:14px; }
+  .rwedit:hover{ border-color:var(--accent); }
+  .rwnew{ flex:0 0 auto; min-height:56px; padding:0 16px; border-radius:13px; font-size:15px;
+    font-weight:800; background:transparent; border:1px dashed var(--line); color:var(--muted); }
+  .rwnew:hover{ border-color:var(--accent); color:var(--accent); }
 }

@@ -246,6 +246,7 @@ async function render() {
   } finally {
     rendering = false;
     ensureHomeFab();
+    ensurePhoneTabs();
     ensureWallShell();
     kioskIdleKick();
     ambientArm();
@@ -288,6 +289,33 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && ty
 setInterval(() => { if (typeof sleepTick === "function") sleepTick(); }, 30000);
 
 // Persistent floating Home button: shown on the four section pages, hidden elsewhere.
+// One destination list, two chromes: the wall renders it as a rail, the phone as a
+// bottom tab bar. They can never drift apart because they read the same array.
+function ensurePhoneTabs() {
+  if (isWall()) { const t = document.getElementById("phoneTabs"); if (t) t.style.display = "none"; return; }
+  let bar = document.getElementById("phoneTabs");
+  if (!bar) { bar = document.createElement("nav"); bar.id = "phoneTabs"; bar.className = "phonetabs"; document.body.appendChild(bar); }
+  const m = getMember();
+  const routed = RAIL_ITEMS.filter((it) => it.route && it.route.startsWith("#/"));
+  // a kid only ever gets Chores — the same gate the wall applies
+  const items = (m && m.is_child) ? routed.filter((it) => it.route === "#/tasks") : routed;
+  const h = location.hash || "";
+  bar.style.display = "";
+  bar.innerHTML = items.map((it) => `
+    <button class="ptab${h.startsWith(it.route) ? " on" : ""}${it.soon ? " soon" : ""}"
+            data-r="${it.route}" ${it.soon ? "disabled" : ""}>
+      <span class="pico">${it.icon}</span><span class="plbl">${esc(it.label)}</span>
+    </button>`).join("");
+  bar.querySelectorAll(".ptab").forEach((b) => {
+    if (b.disabled) return;
+    b.onclick = () => go(b.dataset.r);
+  });
+  // hidden on the screens that aren't "inside" the app
+  const hide = ["#/picker", "#/kid/"].some((r) => h.startsWith(r)) || !m;
+  bar.style.display = hide ? "none" : "";
+  document.documentElement.classList.toggle("hastabs", !hide);
+}
+
 function ensureHomeFab() {
   let fab = document.getElementById("homeFab");
   if (!fab) {
@@ -299,7 +327,7 @@ function ensureHomeFab() {
   }
   const h = location.hash || "";
   const showOn = ["#/home", "#/tasks", "#/finance", "#/meals"];
-  fab.style.display = (!isWall() && showOn.some((r) => h.startsWith(r))) ? "grid" : "none";
+  fab.style.display = "none";   // W14 — the phone tab bar replaced it
 }
 
 // ============================================================================
@@ -1037,6 +1065,7 @@ async function renderCalendar() {
     headerLabel = fmtDayHeader(state.viewDay);
   }
 
+  state._todayCounts = await todayChoreCounts();     // W14 — chore progress on the phone chips too
   let instances = [], counts = {}, loadErr = "";
   try {
     instances = await fetchInstances(winStart, winEnd, "combined");
@@ -1083,10 +1112,11 @@ async function renderCalendar() {
     <section class="content">
       ${navTabs("home")}
       <div class="viewseg viewseg--cal">${vseg("schedule", "Schedule")}${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}${vseg("tasks", "Tasks")}</div>
-      <div class="chips memberchips">${state.members.map((m) => `
-        <button class="chip mchip${state.hiddenMembers.has(m.id) ? "" : " on"}" data-m="${m.id}">
-          ${avatarHTML(m, "favatar")}${esc(m.name)}
-        </button>`).join("")}</div>
+      <div class="chips memberchips">${state.members.map((m) => {
+        const c = (state._todayCounts || {})[m.id];
+        return `<button class="chip mchip${state.hiddenMembers.has(m.id) ? "" : " on"}" data-m="${m.id}">
+          ${avatarHTML(m, "favatar")}${esc(m.name)}${c && c.total ? `<span class="mfrac">${c.done}/${c.total}</span>` : ""}
+        </button>`; }).join("")}</div>
       <div class="calnav">
         <button class="iconbtn" id="prev">‹</button>
         <strong>${esc(headerLabel)}</strong>
@@ -2293,30 +2323,39 @@ async function renderChoreMember() {
   const todayKey = dateKey(new Date());
   const { winStart, winEnd } = choreWindow();
 
-  let tasks = [], doneMap = new Set(), board = [], rewards = [], reds = [], err = "";
+  let tasks = [], allChores = [], grabs = [], doneMap = new Set(), board = [], rewards = [], reds = [], pendingAll = [], err = "";
   try {
-    const r = await fetchTasks(); if (r.error) throw r.error; tasks = (r.data || []).filter((t) => t.assigned_to === mid && t.kind !== "task");
-    doneMap = await fetchDoneMap(tasks.map((t) => t.id));
-    const [bd, rw, rd] = await Promise.all([fetchLeaderboard(), fetchRewards(), fetchRedemptions(mid)]);
+    const r = await fetchTasks(); if (r.error) throw r.error;
+    allChores = (r.data || []).filter((t) => t.kind !== "task");
+    tasks = allChores.filter((t) => t.assigned_to === mid);
+    grabs = allChores.filter((t) => !t.assigned_to);              // W14 — claimable on the phone too
+    doneMap = await fetchDoneMap(allChores.map((t) => t.id));
+    const [bd, rw, rd, pr] = await Promise.all([fetchLeaderboard(), fetchRewards(), fetchRedemptions(mid), fetchPendingRedemptions()]);
     if (bd.error) throw bd.error; if (rw.error) throw rw.error; if (rd.error) throw rd.error;
-    board = bd.data || []; rewards = rw.data || []; reds = rd.data || [];
+    board = bd.data || []; rewards = rw.data || []; reds = rd.data || []; pendingAll = pr.data || [];
   } catch (e) { err = e.message || String(e); }
   state.pending = state.pending || new Set();
   const bal = (board.find((x) => x.id === mid) || {}).star_balance || 0;
   const rewardsById = Object.fromEntries(rewards.map((r) => [r.id, r]));
 
   const isKidView = !!state.member.is_child;    // W0.4 — the VIEWER, not the member on screen
+  const streak = m.is_child ? streakFor(mid, tasks, doneMap) : 0;
   const cellOf = (t, occ) => `${t.id}|${occ ?? ""}`;
   const mkRow = (t, occ, dueKey) => {
     const cell = cellOf(t, occ);
-    return { task: t, occ, dueKey, isDone: doneMap.has(cell) || state.pending.has(cell),
-             isPending: state.pending.has(cell) && !doneMap.has(cell) };
+    return { task: t, occ, dueKey,
+             isDone: (!state.undone?.has(cell)) && (doneMap.has(cell) || state.pending.has(cell)),
+             isPending: state.pending.has(cell) && !doneMap.has(cell),
+             bonus: bonusMultiplier(t.id, occ ?? todayKey) > 1 };
   };
 
   // W0.2 — today only.
   const rows = [];
   for (const t of tasks) for (const occ of todaysOccs(t, todayKey, winStart, winEnd)) rows.push(mkRow(t, occ, occ ?? t.due_date ?? todayKey));
   rows.sort((a, b) => (a.isDone - b.isDone) || String(a.task.due_time || "99").localeCompare(String(b.task.due_time || "99")) || a.task.title.localeCompare(b.task.title));
+
+  const grabRows = [];
+  for (const t of grabs) for (const occ of todaysOccs(t, todayKey, winStart, winEnd)) grabRows.push(mkRow(t, occ, occ ?? t.due_date ?? todayKey));
 
   // W0.2 — a backlog is for parents to triage, never something a 5-year-old is shown.
   const missed = isKidView ? [] : overdueCells(tasks, doneMap, todayKey, CHORE_MISSED_DAYS)
@@ -2325,7 +2364,9 @@ async function renderChoreMember() {
 
   const rowHTML = (r, i, sec) => {
     const t = r.task;
-    const star = t.star_reward > 0 ? `<span class="taskstar">⭐${t.star_reward}</span>` : "";
+    const star = t.star_reward > 0
+      ? `<span class="taskstar${r.bonus && !r.isDone ? " bonus" : ""}">${r.bonus && !r.isDone
+          ? `✨${t.star_reward * 2}` : `⭐${t.star_reward}`}</span>` : "";
     const due = sec === "m" && r.dueKey ? `<span class="taskdue">${esc(fmtDue(r.dueKey))}</span>` : "";
     const rep = t.rrule ? " 🔁" : "";
     const pend = r.isPending ? ` <span class="pendmark" title="Saved locally — will sync when online">⏳</span>` : "";
@@ -2333,7 +2374,7 @@ async function renderChoreMember() {
     return `<div class="task${r.isDone ? " done" : ""}">
       <span class="check${r.isDone ? " on" : ""}" aria-hidden="true">${r.isDone ? "✓" : ""}</span>
       <button class="taskmain" data-i="${i}" data-sec="${sec}" aria-pressed="${r.isDone}">
-        <span class="tasktitle">${esc(t.title)}${rep}${pend}</span>
+        <span class="tasktitle">${iconHTML(t)}${esc(t.title)}${rep}${pend}</span>
         <span class="taskmeta">${star}${due}</span>
       </button>
       ${isKidView ? "" : `<button class="taskedit" data-i="${i}" data-sec="${sec}" title="Edit chore" aria-label="Edit ${esc(t.title)}">✏️</button>`}
@@ -2349,9 +2390,15 @@ async function renderChoreMember() {
     <section class="content">
       ${navTabs("tasks")}
       ${err ? `<p class="err">${esc(err)}</p>` : ""}
-      <div class="balcard" style="padding:18px;margin-bottom:16px"><div class="balnum" style="font-size:44px">${bal}</div><div class="ballabel">⭐ ${esc(m.name)}'s stars</div></div>
+      <div class="balcard" style="padding:18px;margin-bottom:16px">
+        <div class="balnum" style="font-size:44px">${fmtStars(bal).replace("⭐", "")}</div>
+        <div class="ballabel">⭐ ${esc(m.name)}'s stars${streak >= 2 ? ` · <span class="cstreak">🔥${streak}</span>` : ""}</div>
+      </div>
+      ${(!isKidView && pendingAll.length) ? `<button class="rwqueue" id="rwQueue" style="width:100%;margin-bottom:14px">🎁 <b>${pendingAll.length}</b> waiting for a grown-up</button>` : ""}
       <h4 class="lbh">Today</h4>
       <div class="tasklist" id="tasklist"></div>
+      ${grabRows.length ? `<h4 class="lbh" style="margin-top:18px">🙋 Up for grabs</h4>
+        <div class="tasklist grabs" id="grablist"></div>` : ""}
       ${missed.length ? `<details class="missed"><summary>Missed · ${missed.length}</summary><div class="tasklist" id="missedlist"></div></details>` : ""}
       <h4 class="lbh" style="margin-top:20px">🎁 Rewards bank</h4>
       <div class="rewardbank" id="rewardbank"></div>
@@ -2367,22 +2414,42 @@ async function renderChoreMember() {
   }
 
   const list = document.getElementById("tasklist");
-  list.innerHTML = rows.length ? rows.map((r, i) => rowHTML(r, i, "t")).join("")
-    : `<p class="sub">${isKidView ? "Nothing to do today 🎉" : "No chores today — add one."}</p>`;
+  if (!rows.length) {
+    list.innerHTML = `<p class="sub">${isKidView ? "Nothing to do today 🎉" : "No chores today — add one."}</p>`;
+  } else if (m.is_child) {
+    // same routine bands the wall uses — a child reads "morning", not a clock time
+    const seen = new Set();
+    let html = "";
+    for (const [b, label] of BANDS) {
+      const g = rows.filter((r) => bandOf(r.task) === b);
+      g.forEach((r) => seen.add(r));
+      if (g.length) html += `<div class="cgroup">${label}</div>` + g.map((r) => rowHTML(r, rows.indexOf(r), "t")).join("");
+    }
+    const rest = rows.filter((r) => !seen.has(r));
+    if (rest.length) html += `<div class="cgroup">Anytime</div>` + rest.map((r) => rowHTML(r, rows.indexOf(r), "t")).join("");
+    list.innerHTML = html;
+  } else {
+    list.innerHTML = rows.map((r, i) => rowHTML(r, i, "t")).join("");
+  }
+  const glist = document.getElementById("grablist");
+  if (glist) glist.innerHTML = grabRows.map((r, i) => rowHTML(r, i, "g")).join("");
   const mlist = document.getElementById("missedlist");
   if (mlist) mlist.innerHTML = missed.map((r, i) => rowHTML(r, i, "m")).join("");
 
-  const pick = (b) => (b.dataset.sec === "m" ? missed : rows)[+b.dataset.i];
+  const pick = (b) => (b.dataset.sec === "m" ? missed : b.dataset.sec === "g" ? grabRows : rows)[+b.dataset.i];
   el.querySelectorAll(".taskmain").forEach((b) => {
-    b.onclick = () => {
+    b.onclick = async () => {
       const r = pick(b);
-      if (r.isDone) {
-        // Safe undo only: cancel a completion still sitting in the local queue. A
-        // server-side undo needs the uncomplete_task RPC (W4.2) or stars orphan.
-        if (dequeueCompletion(r.task.id, r.occ)) renderChores();
-        return;
+      const cell = cellOf(r.task, r.occ);
+      if (choreCooldown(cell)) return;
+      if (r.isDone) {                                   // W14 — real undo, same as the wall
+        enqueueUncomplete(r.task, r.occ, r.task.assigned_to || mid);
+        renderChores(); flushQueue(); return;
       }
-      enqueueCompletion(r.task, r.occ, mid);
+      let earner = r.task.assigned_to;
+      if (!earner) { earner = isKidView ? mid : await pickClaimant(); if (!earner) return; }
+      state.undone?.delete(cell);
+      enqueueCompletion(r.task, r.occ, earner);
       if (r.task.star_reward > 0) starBurst(r.task.star_reward);
       if (b.dataset.sec === "t" && rows.length && rows.every((x) => x.isDone || x === r)) celebrate();
       renderChores();
@@ -2390,6 +2457,13 @@ async function renderChoreMember() {
     };
   });
   el.querySelectorAll(".taskedit").forEach((b) => { b.onclick = () => openTaskForm(pick(b).task); });
+  const pq = document.getElementById("rwQueue");
+  if (pq) pq.onclick = () => openRedemptionQueue(pendingAll, rewardsById, async (id, status) => {
+    if (!(await requirePin("modify"))) return;
+    const { error } = await supabase.rpc("set_redemption_status", { p_redemption: id, p_status: status });
+    if (error) return toast(error.message);
+    renderChores();
+  });
 
   const rb = document.getElementById("rewardbank");
   rb.innerHTML = rewards.length ? rewards.map((r) => {
@@ -2606,6 +2680,8 @@ async function renderChoreWall() {
       ${best
         ? `<button class="rwgo" data-red="${best.id}" data-m="${m.id}">Redeem${affordable.length > 1 ? ` (${affordable.length})` : ""}</button>`
         : goal ? `<button class="rwgo off" disabled>${goal.star_cost - bal} to go</button>` : ""}
+      ${meIsKid ? "" : `<button class="rwedit" data-rw="${(shown || free[0] || {}).id || ""}"
+        title="Edit rewards">✏️</button>`}
     </div>`;
   };
   // One compact button, not N cards: eight pending redemptions used to run straight off
@@ -2617,7 +2693,8 @@ async function renderChoreWall() {
     <header class="topbar"><h1>Chores</h1><span></span></header>
     <section class="content chorespane">
       ${err ? `<p class="err">${esc(err)}</p>` : ""}
-      <div class="rwstrip">${kids.map(kidCard).join("")}${pendHTML}</div>
+      <div class="rwstrip">${kids.map(kidCard).join("")}${pendHTML}${
+        meIsKid ? "" : `<button class="rwnew" id="rwNew" title="Create a reward">🎁 +</button>`}</div>
       <div class="ccols" style="--ccols:${cols.length}">${cols.map(colHTML).join("")}</div>
     </section>`;
 
@@ -2644,6 +2721,9 @@ async function renderChoreWall() {
   el.querySelectorAll(".cedit").forEach((b) => { b.onclick = () => openTaskForm(rows[+b.dataset.i].task); });
   el.querySelectorAll(".cadd").forEach((b) => { b.onclick = () => openTaskForm(null, b.dataset.add || null); });
   el.querySelectorAll(".rwav").forEach((b) => { b.onclick = () => go(`#/kid/${b.dataset.kid}`); });
+  el.querySelectorAll(".rwedit").forEach((b) => {
+    b.onclick = () => openRewardForm(b.dataset.rw ? rewardsById[b.dataset.rw] : null);
+  });
   el.querySelectorAll(".rwgo:not(.off)").forEach((b) => {
     b.onclick = async () => {
       if (!(await requirePin("modify"))) return;             // the one irreversible action
@@ -2666,6 +2746,8 @@ async function renderChoreWall() {
     if (error) return alert(error.message);
     renderChores();
   };
+  const rn = document.getElementById("rwNew");
+  if (rn) rn.onclick = () => openRewardForm(null);
   const q = document.getElementById("rwQueue");
   if (q) q.onclick = () => openRedemptionQueue(pending, rewardsById, setRed);
 }
