@@ -2,11 +2,28 @@
   /* warm light family theme */
   --bg:#FBF7F0; --panel:#FFFFFF; --panel2:#F4EDE2; --text:#2E2A26;
   --muted:#8A8178; --line:#EBE2D4; --accent:#FF7A45; --danger:#E8595B;
-  --pos:#2FA36B; --star:#E0892B;
-  /* per-person identity colours (warm, cheerful) */
-  --blue:#3D8BCD; --green:#3FA796; --amber:#E8A23D; --pink:#D4709B;
+  --pos:#2FA36B; --star:#E0892B; --rail:#F6EFE4;
+  /* W1 — per-person identity: ink (edge/avatar/badge) + tint (pill fill).
+     Solid saturated blocks turn to mud at four metres; tint-with-edge doesn't. */
+  --teal:#2E9C8E;   --teal-t:#DCF1EE;
+  --red:#D4646B;    --red-t:#FBE4E5;
+  --blue:#4A86C8;   --blue-t:#E1EDF9;
+  --green:#4FA35F;  --green-t:#E3F2E5;
+  --amber:#D9932F;  --amber-t:#FBEEDA;
+  --purple:#8C6BC8; --purple-t:#EBE4F8;
+  --pink:#CF6FA4;   --pink-t:#F9E3EE;
+  --indigo:#7C83DB; --indigo-t:#E6E8FA;
+  --slate:#7A8794;  --slate-t:#E9EDF1;
   --shadow:0 2px 10px rgba(80,55,25,.06);
 }
+/* W1 — density + text size. Device-local (localStorage), never synced: the wall
+   wants roomy/large, a phone wants snug/medium. Consumed from W7 onward. */
+html[data-density="roomy"]{ --row-h:68px; --pad:13px; --gap:8px; }
+html[data-density="cozy"] { --row-h:56px; --pad:10px; --gap:6px; }
+html[data-density="snug"] { --row-h:44px; --pad:7px;  --gap:4px; }
+html[data-text="s"]{ --fs-body:12px;   --fs-title:12px;   --fs-head:17px; }
+html[data-text="m"]{ --fs-body:13px;   --fs-title:12.5px; --fs-head:19px; }
+html[data-text="l"]{ --fs-body:15px;   --fs-title:14px;   --fs-head:22px; }
 *{ box-sizing:border-box; }
 html,body{ margin:0; height:100%; }
 body{
@@ -486,3 +503,76 @@ button.finrow:hover{ border-color:var(--accent); }
 .pendmark{ font-size:12px; opacity:.85; }
 .offline-banner{ position:sticky; top:0; z-index:40; background:#9A3412; color:#FFE8D6;
   text-align:center; font-size:13px; padding:6px; }
+
+/* ==========================================================================
+   W1 — WALL SHELL (Dell ST2220TC 22" @ 1280x720 landscape, Chromium kiosk)
+   Exactly ONE breakpoint. Below it, every rule here is inert and the phone
+   layout is untouched. 1280/487mm => 2.63 px/mm, so 44px = 16.7mm (adult ok)
+   and 56px = 21.3mm (the kiosk floor, and the minimum a kid may tap).
+   ========================================================================== */
+#wallRail,#wallInfo,#wallPeople,#wallFab{ display:none; }
+
+@media (min-width:1000px) and (orientation:landscape){
+  body{
+    display:grid; height:100dvh; overflow:hidden;
+    grid-template-columns:104px 1fr;
+    grid-template-rows:56px 52px 1fr;
+    grid-template-areas:"rail info" "rail people" "rail app";
+  }
+  #wallRail{ display:flex; grid-area:rail; }
+  #wallInfo{ display:flex; grid-area:info; }
+  #wallPeople{ display:flex; grid-area:people; }
+  #app{ grid-area:app; min-height:0; overflow:auto; }
+  .app{ min-height:0; }                 /* was min-height:100dvh — would push the pane past the viewport */
+  .content{ max-width:none; padding:16px; }  /* THE defect: a 560px column on a 1280px panel */
+  .homefab{ display:none !important; }  /* the rail replaces it */
+  #wallFab{ display:grid; }
+
+  /* the per-view topbar keeps its title and action button; only the profile
+     switcher goes, because the wall has no profile to switch. */
+  .topbar{ position:static; background:none; border-bottom:0; backdrop-filter:none; padding:6px 16px; }
+  .topbar #switch{ display:none; }
+  .viewseg,.memberchips{ display:none; }  /* moved into the info bar / people strip */
+
+  /* ---- rail ---- */
+  #wallRail{ flex-direction:column; gap:3px; padding:10px 8px; background:var(--rail); border-right:1px solid var(--line); }
+  .railbrand{ display:grid; place-items:center; padding:6px 0 12px; margin-bottom:5px; border-bottom:1px solid var(--line); }
+  .railbrand .rbm{ width:34px; height:34px; border-radius:11px; background:var(--accent); color:#fff;
+    display:grid; place-items:center; font-weight:800; font-size:16px; }
+  #wallRail .navitem{ background:none; border:0; padding:11px 4px 9px; border-radius:14px; min-height:56px;
+    display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); font-weight:600; font-size:11px; }
+  #wallRail .navitem .ico{ font-size:22px; line-height:1; }
+  #wallRail .navitem:hover:not(:disabled){ background:#EFE6D7; }
+  #wallRail .navitem.on{ background:#fff; color:var(--accent); box-shadow:var(--shadow); }
+  #wallRail .navitem.soon{ opacity:.38; cursor:default; }
+  .railspacer{ flex:1; }
+
+  /* ---- info bar ---- */
+  #wallInfo{ align-items:center; gap:14px; padding:0 16px; border-bottom:1px solid var(--line); }
+  #wallInfo .famname{ font-size:19px; font-weight:800; letter-spacing:-.2px; }
+  #wallInfo .wclock{ font-size:17px; font-weight:600; color:#4a443d; font-variant-numeric:tabular-nums; }
+  #wallInfo .ibspacer{ flex:1; }
+  #wallInfo .segs{ display:flex; background:var(--panel2); border-radius:11px; padding:3px; gap:2px; }
+  #wallInfo .seg{ background:none; border:0; font-size:13px; font-weight:600; color:var(--muted);
+    padding:7px 14px; border-radius:9px; min-height:44px; }
+  #wallInfo .seg.on{ background:#fff; color:var(--text); box-shadow:var(--shadow); }
+  #wallInfo .ibtn{ border:1px solid var(--line); background:#fff; border-radius:10px; padding:8px 13px;
+    font-size:13px; font-weight:600; color:#4a443d; min-height:44px; }
+  #wallInfo .ibtn:hover{ border-color:var(--accent); color:var(--accent); }
+
+  /* ---- people strip: filter chip + chore progress in one control ---- */
+  #wallPeople{ align-items:center; gap:10px; padding:0 16px; border-bottom:1px solid var(--line); background:#FDFAF5; overflow-x:auto; }
+  #wallPeople .person{ display:flex; align-items:center; gap:8px; padding:5px 12px 5px 5px; border-radius:999px;
+    border:1px solid var(--line); background:#fff; min-width:176px; min-height:44px; color:var(--text); }
+  #wallPeople .person.off{ opacity:.38; }
+  #wallPeople .pmeta{ flex:1; min-width:0; text-align:left; }
+  #wallPeople .pname{ display:block; font-size:12.5px; font-weight:700; line-height:1.1; }
+  #wallPeople .pbar{ display:block; height:5px; border-radius:3px; background:#EDE5D8; margin-top:4px; overflow:hidden; }
+  #wallPeople .pbar i{ display:block; height:100%; border-radius:3px; }
+  #wallPeople .pfrac{ font-size:11px; color:var(--muted); font-weight:700; font-variant-numeric:tabular-nums; }
+
+  /* ---- FAB ---- */
+  #wallFab{ position:fixed; right:20px; bottom:20px; width:62px; height:62px; border-radius:50%;
+    place-items:center; background:var(--accent); color:#fff; font-size:32px; line-height:1;
+    box-shadow:0 6px 18px rgba(255,122,69,.42); z-index:40; padding:0; }
+}

@@ -5,9 +5,13 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, SHARED_EMAIL, VAPID_PUBLIC_KEY } from 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const MEMBER_KEY = "fh_current_member";
 
-const COLORS = { blue: "#3D8BCD", green: "#3FA796", amber: "#E8A23D", pink: "#D4709B", red: "#E8595B", purple: "#C77DD8", teal: "#2FA6B0", indigo: "#7C83DB" };
+// W1: ink + tint pairs. Solid saturated blocks turn to mud at four metres; a pale
+// tint with a 3px ink edge stays legible. Every pill, chip and avatar draws from here.
+const COLORS = { blue: "#4A86C8", green: "#4FA35F", amber: "#D9932F", pink: "#CF6FA4", red: "#D4646B", purple: "#8C6BC8", teal: "#2E9C8E", indigo: "#7C83DB", slate: "#7A8794" };
+const TINTS  = { blue: "#E1EDF9", green: "#E3F2E5", amber: "#FBEEDA", pink: "#F9E3EE", red: "#FBE4E5", purple: "#EBE4F8", teal: "#DCF1EE", indigo: "#E6E8FA", slate: "#E9EDF1" };
 const ALL_COLOR = "#B0A48F"; // whole-family events (warm taupe)
 const colorFor = (c) => COLORS[c] || "#8A8178";
+const tintFor  = (c) => TINTS[c] || "#EFEAE1";
 // avatar = emoji/initial stored in avatar_url (falls back to first letter of name)
 const avatarHTML = (m, cls = "avatar") => {
   const a = m.avatar_url;
@@ -195,16 +199,22 @@ async function render() {
   } finally {
     rendering = false;
     ensureHomeFab();
+    ensureWallShell();
     kioskIdleKick();
   }
 }
 
 // ---- kiosk idle reset ------------------------------------------------------
 // W0.1: the wall never reloads, so a stale identity would persist forever. Dropping
-// back to the profile picker after a quiet spell makes that whole class of bug
-// structurally impossible. Suspended while a modal is open so a half-typed form is
-// never discarded. (W1 retargets this to the wall's Calendar instead of the picker.)
-const KIOSK_IDLE_MS = 30000;
+// back after a quiet spell makes that whole class of bug structurally impossible.
+// Suspended while a modal is open so a half-typed form is never discarded.
+//
+// W1 splits the destination by surface. The WALL HAS NO PROFILE PICKER — it has no
+// identity at all — so returning there would strand it on a screen that shouldn't
+// exist. On the wall the idle action is "go back to Calendar"; on a phone it still
+// drops identity and returns to the picker. 30 s also bounced you mid-read, so the
+// timeout is 120 s until W7 makes it configurable and hands the long one to ambient.
+const KIOSK_IDLE_MS = 120000;
 let kioskTimer = null;
 function kioskIdleKick() {
   clearTimeout(kioskTimer);
@@ -213,6 +223,7 @@ function kioskIdleKick() {
   if (!armed || !getMember()) return;
   kioskTimer = setTimeout(() => {
     if (document.querySelector(".modal-overlay")) return kioskIdleKick(); // editing — wait
+    if (isWall()) { if (!h.startsWith("#/home")) go("#/home"); return; }
     clearMember();
     go("#/picker");
   }, KIOSK_IDLE_MS);
@@ -233,7 +244,169 @@ function ensureHomeFab() {
   }
   const h = location.hash || "";
   const showOn = ["#/home", "#/tasks", "#/finance", "#/meals"];
-  fab.style.display = showOn.some((r) => h.startsWith(r)) ? "grid" : "none";
+  fab.style.display = (!isWall() && showOn.some((r) => h.startsWith(r))) ? "grid" : "none";
+}
+
+// ============================================================================
+// W1 — the wall shell
+// ----------------------------------------------------------------------------
+// The rail, info bar and people strip are created ONCE as siblings of #app and
+// placed by CSS Grid. No view's HTML changes; below the breakpoint the three are
+// display:none and body is normal flow again. That is why "the phone is unchanged"
+// holds by construction rather than by inspection.
+// ============================================================================
+const WALL_MQ = "(min-width:1000px) and (orientation:landscape)";
+const isWall = () => window.matchMedia(WALL_MQ).matches;
+
+const RAIL_ITEMS = [
+  { id: "cal",    route: "#/home",   icon: "🗓️", label: "Calendar" },
+  { id: "chores", route: "#/tasks",  icon: "✅", label: "Chores" },
+  { id: "meals",  route: "#/meals",  icon: "🍽️", label: "Meals" },
+  { id: "lists",  route: "#/lists",  icon: "📝", label: "Lists", soon: "W8" },
+  { id: "_spacer" },
+  { id: "sleep",  route: null,       icon: "🌙", label: "Sleep", soon: "W7" },
+  { id: "set",    route: "#/family", icon: "⚙️", label: "Settings" },
+];
+
+// Density + text size are DEVICE-local: the wall wants roomy/large, a phone wants
+// snug/medium, and they must not fight each other over the network.
+function applyDisplayPrefs() {
+  const wall = isWall();
+  const d = localStorage.getItem("fh_density") || (wall ? "roomy" : "snug");
+  const t = localStorage.getItem("fh_text") || (wall ? "l" : "m");
+  document.documentElement.setAttribute("data-density", d);
+  document.documentElement.setAttribute("data-text", t);
+}
+
+function ensureWallShell() {
+  applyDisplayPrefs();
+  document.documentElement.classList.toggle("wall", isWall());
+
+  let rail = document.getElementById("wallRail");
+  if (!rail) {
+    // created unconditionally so <body> always has the same four grid children
+    rail = document.createElement("nav"); rail.id = "wallRail";
+    const info = document.createElement("div"); info.id = "wallInfo";
+    const people = document.createElement("div"); people.id = "wallPeople";
+    const fab = document.createElement("button");
+    fab.id = "wallFab"; fab.type = "button"; fab.textContent = "＋";
+    fab.setAttribute("aria-label", "Add");
+    fab.onclick = wallFabAction;
+    document.body.insertBefore(rail, el);
+    document.body.insertBefore(info, el);
+    document.body.insertBefore(people, el);
+    document.body.appendChild(fab);
+    window.matchMedia(WALL_MQ).addEventListener("change", () => { ensureWallShell(); ensureHomeFab(); });
+  }
+  if (!isWall()) { clearInterval(state._clockTimer); state._clockTimer = null; return; }
+
+  renderRail();
+  renderInfoBar();
+  // On a cold load the family name isn't known yet; repaint the chrome only if the
+  // strip's loadContext() actually changed it, so warm navigations stay single-pass.
+  const nameBefore = state.familyName;
+  renderPeopleStrip().then(() => {
+    if (state.familyName !== nameBefore) { renderRail(); renderInfoBar(); }
+  });
+}
+
+function renderRail() {
+  const h = location.hash || "";
+  const active = (it) => it.route && (it.route === "#/home" ? h.startsWith("#/home") : h.startsWith(it.route));
+  document.getElementById("wallRail").innerHTML = `
+    <div class="railbrand"><span class="rbm">${esc((state.familyName || "Family")[0] || "F")}</span></div>
+    ${RAIL_ITEMS.map((it) => it.id === "_spacer" ? `<div class="railspacer"></div>` : `
+      <button class="navitem${active(it) ? " on" : ""}${it.soon ? " soon" : ""}" data-r="${it.route || ""}"
+              ${it.soon ? `disabled title="Coming in ${it.soon}"` : ""}>
+        <span class="ico">${it.icon}</span>${esc(it.label)}
+      </button>`).join("")}`;
+  document.querySelectorAll("#wallRail .navitem").forEach((b) => {
+    // guard: an unrouted tap would fall through the router to the profile picker
+    if (b.disabled || !b.dataset.r) return;
+    b.onclick = () => go(b.dataset.r);
+  });
+}
+
+function renderInfoBar() {
+  const h = location.hash || "";
+  const onCal = h.startsWith("#/home");
+  const view = state.calView || "day";
+  const vseg = (v, label) => `<button class="seg${view === v ? " on" : ""}" data-v="${v}">${label}</button>`;
+  document.getElementById("wallInfo").innerHTML = `
+    <span class="famname">${esc(state.familyName || "Family Hub")}</span>
+    <span class="wclock" id="wallClock">${fmtClock(new Date())}</span>
+    <span class="cdslot" id="wallCountdown"></span>
+    <span class="ibspacer"></span>
+    ${onCal ? `<span class="segs">${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}</span>` : ""}
+    ${onCal ? `<button class="ibtn" id="wallToday">Today</button>` : ""}`;
+  if (onCal) {
+    document.querySelectorAll("#wallInfo .seg").forEach((b) => {
+      b.onclick = () => { state.calView = b.dataset.v; renderCalendar(); renderInfoBar(); };
+    });
+    document.getElementById("wallToday").onclick = () => {
+      const n = new Date();
+      state.viewDay = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+      state.viewMonth = new Date(n.getFullYear(), n.getMonth(), 1);
+      renderCalendar();
+    };
+  }
+  // one interval, ever — ensureWallShell() runs on every navigation
+  clearInterval(state._clockTimer);
+  state._clockTimer = setInterval(() => {
+    const n = document.getElementById("wallClock");
+    if (n) n.textContent = fmtClock(new Date()); else { clearInterval(state._clockTimer); state._clockTimer = null; }
+  }, 30000);
+}
+const fmtClock = (d) => {
+  let h = d.getHours(); const ap = h < 12 ? "AM" : "PM";
+  h = h % 12 === 0 ? 12 : h % 12;
+  return `${h}:${pad(d.getMinutes())} ${ap}`;
+};
+
+async function renderPeopleStrip() {
+  const strip = document.getElementById("wallPeople");
+  if (!strip || !isWall()) return;
+  // render()'s finally block runs before the view's own loadContext() settles, so on a
+  // cold load state.members is still null here. Load it rather than render an empty bar.
+  if (!state.members) { if (!getMember()) return; await loadContext(); }
+  if (!state.members) return;
+  if (!state.hiddenMembers) state.hiddenMembers = new Set();  // renderCalendar creates it lazily; the strip can run first
+  const counts = await todayChoreCounts();
+  strip.innerHTML = state.members.map((m) => {
+    const c = counts[m.id] || { done: 0, total: 0 };
+    const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
+    const off = state.hiddenMembers.has(m.id);
+    return `<button class="person${off ? " off" : ""}" data-m="${m.id}" data-kid="${m.is_child ? 1 : 0}"
+                    aria-pressed="${!off}" title="${esc(m.name)} — tap to filter${m.is_child ? ", hold for Kid Mode" : ""}">
+      ${avatarHTML(m, "avatar sm")}
+      <span class="pmeta">
+        <span class="pname">${esc(m.name)}</span>
+        <span class="pbar"><i style="width:${pct}%;background:${colorFor(m.color)}"></i></span>
+      </span>
+      <span class="pfrac">${c.total ? `${c.done}/${c.total}` : "—"}</span>
+    </button>`;
+  }).join("");
+  strip.querySelectorAll(".person").forEach((b) => {
+    b.onclick = () => {
+      const id = b.dataset.m;
+      if (state.hiddenMembers.has(id)) state.hiddenMembers.delete(id); else state.hiddenMembers.add(id);
+      renderPeopleStrip();
+      if ((location.hash || "").startsWith("#/home")) renderCalendar();
+    };
+  });
+}
+
+// Context-aware: explicit for the routes we know, otherwise click the view's own
+// primary action so a new pane never gets a dead FAB.
+function wallFabAction() {
+  const h = location.hash || "";
+  if (h.startsWith("#/tasks")) return openTaskForm(null);
+  if (h.startsWith("#/home")) {
+    if (state.calView === "tasks") return openTaskItemForm(null, null, dateKey(new Date()));
+    return openEventForm(null, state.calView === "month" ? null : dateKey(state.viewDay));
+  }
+  const b = el.querySelector(".topbar button:not(.iconbtn)");
+  if (b) b.click();
 }
 
 // ---- view: home hub (section launcher) -------------------------------------
@@ -445,8 +618,10 @@ function openMemberForm(member) {
 // ---- data layer (all reads/writes go through RLS) --------------------------
 async function loadContext() {
   if (state.familyId && state.members) return;
-  const { data: fam } = await supabase.from("families").select("id").limit(1).maybeSingle();
+  const { data: fam } = await supabase.from("families").select("id,name,tz").limit(1).maybeSingle();
   state.familyId = fam?.id ?? null;
+  state.familyName = fam?.name || "Family Hub";
+  state.familyTz = fam?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const { data: mem } = await supabase.from("family_members").select("id,name,color,is_child,avatar_url,sort_order").order("sort_order");
   state.members = mem || [];
   state.membersById = Object.fromEntries(state.members.map((m) => [m.id, m]));
@@ -1492,27 +1667,40 @@ function celebrate() {
   }
 }
 
+// W1: ONE implementation of "today's chores done / assigned, per member". The chore
+// avatar grid and the wall's people strip both read it. Two copies would drift, and
+// this is the number Suzy trusts at a glance.
+async function todayChoreCounts() {
+  const todayKey = dateKey(new Date());
+  const ws = new Date(); ws.setHours(0, 0, 0, 0);
+  const we = new Date(ws); we.setDate(we.getDate() + 1);
+  const counts = {};
+  try {
+    const r = await fetchTasks(); if (r.error) throw r.error;
+    const tasks = (r.data || []).filter((t) => t.kind !== "task");
+    const doneMap = await fetchDoneMap(tasks.map((t) => t.id));
+    state.pending = state.pending || new Set();
+    for (const t of tasks) {
+      if (!t.assigned_to) continue;
+      for (const occ of todaysOccs(t, todayKey, ws, we)) {
+        const c = counts[t.assigned_to] || (counts[t.assigned_to] = { done: 0, total: 0 });
+        c.total++;
+        const cell = `${t.id}|${occ ?? ""}`;
+        if (doneMap.has(cell) || state.pending.has(cell)) c.done++;
+      }
+    }
+  } catch (_) { /* strip degrades to 0/0 rather than blocking the shell */ }
+  return counts;
+}
+
 // Chores home = family member avatars (star balance + today's progress)
 async function renderChoreHome() {
-  const todayKey = dateKey(new Date());
-  const ws = new Date(); ws.setHours(0, 0, 0, 0); const we = new Date(ws); we.setDate(we.getDate() + 1);
-  let tasks = [], doneMap = new Set(), board = [], err = "";
-  try {
-    const r = await fetchTasks(); if (r.error) throw r.error; tasks = (r.data || []).filter((t) => t.kind !== "task");
-    doneMap = await fetchDoneMap(tasks.map((t) => t.id));
-    const b = await fetchLeaderboard(); if (b.error) throw b.error; board = b.data || [];
-  } catch (e) { err = e.message || String(e); }
+  let board = [], err = "";
+  try { const b = await fetchLeaderboard(); if (b.error) throw b.error; board = b.data || []; }
+  catch (e) { err = e.message || String(e); }
   state.pending = state.pending || new Set();
   const balById = Object.fromEntries(board.map((m) => [m.id, m.star_balance]));
-  const counts = {};
-  for (const t of tasks) {
-    if (!t.assigned_to) continue;
-    for (const occ of todaysOccs(t, todayKey, ws, we)) {
-      const c = counts[t.assigned_to] || (counts[t.assigned_to] = { done: 0, total: 0 });
-      c.total++;
-      if (doneMap.has(`${t.id}|${occ ?? ""}`) || state.pending.has(`${t.id}|${occ ?? ""}`)) c.done++;
-    }
-  }
+  const counts = await todayChoreCounts();
   el.innerHTML = `
     <header class="topbar">
       <button class="iconbtn" id="switch" title="Switch profile">‹</button>
@@ -1772,7 +1960,11 @@ async function subscribeRealtime(tables, onChange) {
   const { data: { session } } = await supabase.auth.getSession();
   if (session) supabase.realtime.setAuth(session.access_token);
   let ch = supabase.channel("fh-" + Math.random().toString(36).slice(2));
-  for (const t of tables) ch = ch.on("postgres_changes", { event: "*", schema: "public", table: t }, onChange);
+  // W1: the people strip lives OUTSIDE #app, so render() never refreshes it. Wrapping
+  // centrally means a chore completed on a phone moves the wall's bars, whatever view
+  // happens to be open.
+  const wrapped = (payload) => { onChange(payload); if (isWall()) renderPeopleStrip(); };
+  for (const t of tables) ch = ch.on("postgres_changes", { event: "*", schema: "public", table: t }, wrapped);
   state.channel = ch.subscribe();
 }
 

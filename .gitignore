@@ -14,3 +14,5 @@ Thumbs.db
 *.mjs
 node_modules/
 _to_delete/
+node_modules/
+test/shots/
