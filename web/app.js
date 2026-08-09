@@ -7,9 +7,9 @@ const MEMBER_KEY = "fh_current_member";
 
 // W1: ink + tint pairs. Solid saturated blocks turn to mud at four metres; a pale
 // tint with a 3px ink edge stays legible. Every pill, chip and avatar draws from here.
-const COLORS = { blue: "#4A86C8", green: "#4FA35F", amber: "#D9932F", pink: "#CF6FA4", red: "#D4646B", purple: "#8C6BC8", teal: "#2E9C8E", indigo: "#7C83DB", slate: "#7A8794" };
-const TINTS  = { blue: "#E1EDF9", green: "#E3F2E5", amber: "#FBEEDA", pink: "#F9E3EE", red: "#FBE4E5", purple: "#EBE4F8", teal: "#DCF1EE", indigo: "#E6E8FA", slate: "#E9EDF1" };
-const ALL_COLOR = "#B0A48F"; // whole-family events (warm taupe)
+const COLORS = { blue: "#5C86B8", green: "#5E9150", amber: "#A2761F", pink: "#A85F82", red: "#C06A6A", purple: "#8C6BA8", teal: "#3F8F84", indigo: "#455780", slate: "#75837A" };
+const TINTS  = { blue: "#DEE7F2", green: "#DFEBD9", amber: "#F2E6CE", pink: "#F2DEE7", red: "#F3DFDE", purple: "#E8E0F0", teal: "#DCEBE7", indigo: "#DEE3EC", slate: "#E2E7E1" };
+const ALL_COLOR = "#8B9A8E"; // whole-family events (warm taupe)
 const colorFor = (c) => COLORS[c] || "#8A8178";
 const tintFor  = (c) => TINTS[c] || "#EFEAE1";
 // avatar = emoji/initial stored in avatar_url (falls back to first letter of name)
@@ -318,6 +318,7 @@ const RAIL_ITEMS = [
   { id: "chores", route: "#/tasks",  icon: "✅", label: "Chores" },
   { id: "meals",  route: "#/meals",  icon: "🍽️", label: "Meals" },
   { id: "lists",  route: "#/lists",  icon: "📝", label: "Lists" },
+  { id: "money",  route: "#/finance", icon: "💰", label: "Money" },
   { id: "_spacer" },
   { id: "sleep",  route: "#sleep",   icon: "🌙", label: "Sleep",
     hint: "Blank the screen now — tap anywhere to wake it" },
@@ -1081,7 +1082,7 @@ async function renderCalendar() {
     </header>
     <section class="content">
       ${navTabs("home")}
-      <div class="viewseg">${vseg("schedule", "Schedule")}${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}${vseg("tasks", "Tasks")}</div>
+      <div class="viewseg viewseg--cal">${vseg("schedule", "Schedule")}${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}${vseg("tasks", "Tasks")}</div>
       <div class="chips memberchips">${state.members.map((m) => `
         <button class="chip mchip${state.hiddenMembers.has(m.id) ? "" : " on"}" data-m="${m.id}">
           ${avatarHTML(m, "favatar")}${esc(m.name)}
@@ -2189,6 +2190,13 @@ async function viewTasks() {
   subscribeRealtime(["tasks", "task_completions", "family_members", "rewards", "redemptions", "star_ledger"], () => renderChores());
 }
 async function renderChores() {
+  // W11 — a pre-reader's Chores IS Kid Mode. The family grid is unreadable to a
+  // 5-year-old and shows him other people's chores; there is no version of it he
+  // should ever see.
+  const me = state.member;
+  if (me && me.is_child && kidModeOf(me) === "prereader" && !state.kidMode) {
+    return go(`#/kid/${me.id}`);
+  }
   if (isWall() && !state.kidMode) return renderChoreWall();
   return state.choreMember ? renderChoreMember() : renderChoreHome();
 }
@@ -2422,6 +2430,41 @@ async function renderChoreMember() {
 // never something a 5-year-old is shown. The whole 56px row is the tap target and it
 // TOGGLES; a 1.5s cooldown stops a double-tap flip-flop and rate-limits a rampage.
 // ============================================================================
+// Mirror of the server's bonus_multiplier(). The DERIVED value is what gets paid —
+// this copy only decides whether to show the badge, so a tampered client can lie to
+// itself and still be paid the correct amount.
+function hashText(str) {                     // matches postgres hashtext() closely enough
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
+  return Math.abs(h);
+}
+const bonusMultiplier = (taskId, dateKeyStr) =>
+  hashText(String(taskId) + String(dateKeyStr || "2000-01-01")) % 5 === 0 ? 2 : 1;
+
+// "days in a row where everything got done" — the retention lever the benchmark
+// actually identified. Counted client-side from data already fetched.
+function streakFor(memberId, tasks, doneMap, days = 21) {
+  let streak = 0;
+  for (let back = 0; back < days; back++) {
+    const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - back);
+    const key = dateKey(d);
+    const ws = new Date(d), we = new Date(d); we.setDate(we.getDate() + 1);
+    let total = 0, done = 0;
+    for (const t of tasks) {
+      if (t.assigned_to !== memberId) continue;
+      for (const occ of todaysOccs(t, key, ws, we)) {
+        total++;
+        if (doneMap.has(`${t.id}|${occ ?? ""}`)) done++;
+      }
+    }
+    if (!total) { if (back === 0) continue; break; }   // a day with no chores doesn't break it
+    if (done === total) streak++;
+    else if (back === 0) continue;                     // today still in progress
+    else break;
+  }
+  return streak;
+}
+
 const BANDS = [["morning", "☀️ Morning"], ["afternoon", "🌤️ Afternoon"], ["evening", "🌙 Evening"]];
 const bandOf = (t) => (t.time_band || (t.due_time ? (t.due_time < "12:00" ? "morning" : t.due_time < "17:00" ? "afternoon" : "evening") : null));
 const iconHTML = (t) => {
@@ -2472,10 +2515,11 @@ async function renderChoreWall() {
   // today's rows, grouped by owner ("" = up for grabs)
   const rows = [];
   for (const t of chores) for (const occ of todaysOccs(t, todayKey, ws, we))
-    rows.push({ task: t, occ, owner: t.assigned_to || "", done: isDone(t, occ) });
+    rows.push({ task: t, occ, owner: t.assigned_to || "", done: isDone(t, occ),
+                bonus: bonusMultiplier(t.id, occ ?? todayKey) > 1 });
   state._choreRows = rows;
 
-  const kids = state.members.filter((m) => m.is_child);
+  const kids = state.members.filter((m) => m.is_child && (!meIsKid || m.id === meId));
   const ordered = meId
     ? state.members.slice().sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : 0))
     : state.members;
@@ -2483,14 +2527,23 @@ async function renderChoreWall() {
   const cols = [{ id: "", name: "🙋 Up for grabs", grab: true }]
     .concat(visible.map((m) => ({ id: m.id, m })));
 
+  const streaks = {};
+  for (const m of state.members) if (m.is_child) streaks[m.id] = streakFor(m.id, chores, doneMap);
+
   const rowHTML = (r) => {
     const i = rows.indexOf(r);
-    return `<button class="citem${r.done ? " done" : ""}" data-i="${i}" aria-pressed="${r.done}">
-      <span class="ctick">${r.done ? "✓" : ""}</span>
-      ${iconHTML(r.task)}
-      <span class="clbl">${esc(r.task.title)}</span>
-      ${r.task.star_reward ? `<span class="cpts">${r.task.star_reward}⭐</span>` : ""}
-    </button>`;
+    return `<div class="crow">
+      <button class="citem${r.done ? " done" : ""}" data-i="${i}" aria-pressed="${r.done}">
+        <span class="ctick">${r.done ? "✓" : ""}</span>
+        ${iconHTML(r.task)}
+        <span class="clbl">${esc(r.task.title)}</span>
+        ${r.task.star_reward
+          ? `<span class="cpts${r.bonus && !r.done ? " bonus" : ""}">${r.bonus && !r.done
+              ? `✨${r.task.star_reward * 2}⭐` : `${r.task.star_reward}⭐`}</span>` : ""}
+      </button>
+      ${meIsKid ? "" : `<button class="cedit" data-i="${i}" title="Edit ${esc(r.task.title)}"
+         aria-label="Edit ${esc(r.task.title)}">✏️</button>`}
+    </div>`;
   };
 
   const colHTML = (c) => {
@@ -2513,29 +2566,36 @@ async function renderChoreWall() {
     }
     const isMe = !c.grab && c.id === meId;
     const head = c.grab
-      ? `<div class="chd"><span class="cnm">🙋 Up for grabs</span></div>`
+      ? `<div class="chd"><span class="cnm">🙋 Up for grabs</span>
+           ${meIsKid ? "" : `<button class="cadd" data-add="" title="Add an unassigned chore">+</button>`}</div>`
       : `<div class="chd">${avatarHTML(c.m, "avatar sm")}
-           <span class="cnm">${esc(c.m.name)}${isMe ? ` <span class="cme">you</span>` : ""}</span>
-           ${c.m.is_child ? `<span class="cst">${fmtStars(balById[c.m.id] ?? 0)}</span>` : ""}</div>`;
+           <span class="cnm">${esc(c.m.name)}${isMe ? ` <span class="cme">you</span>` : ""}${
+             c.m.is_child && streaks[c.id] >= 2 ? ` <span class="cstreak">🔥${streaks[c.id]}</span>` : ""}</span>
+           ${c.m.is_child ? `<span class="cst">${fmtStars(balById[c.m.id] ?? 0)}</span>` : ""}
+           ${meIsKid ? "" : `<button class="cadd" data-add="${c.id}" title="Add a chore for ${esc(c.m.name)}">+</button>`}</div>`;
     return `<div class="ccol${c.grab ? " grab" : ""}${isMe ? " me" : ""}" data-col="${c.id}">${head}<div class="cbody">${inner}</div></div>`;
   };
 
   // rewards strip: one card per kid + a parent action row for every pending redemption
   const kidCard = (m) => {
     const bal = balById[m.id] ?? 0;
-    const next = rewards.filter((r) => r.star_cost > bal).sort((a, b) => a.star_cost - b.star_cost)[0]
-      || rewards.slice().sort((a, b) => b.star_cost - a.star_cost)[0];
-    const afford = next && bal >= next.star_cost;
-    const pct = next ? Math.min(100, Math.round((bal / Math.max(1, next.star_cost)) * 100)) : 0;
+    const byCost = rewards.slice().sort((a, b) => a.star_cost - b.star_cost);
+    const affordable = byCost.filter((r) => bal >= r.star_cost);
+    const best = affordable[affordable.length - 1] || null;      // the best they can have NOW
+    const goal = byCost.find((r) => r.star_cost > bal) || null;   // the next thing to work towards
+    const shown = goal || best;
+    const pct = shown ? Math.min(100, Math.round((bal / Math.max(1, shown.star_cost)) * 100)) : 0;
     return `<div class="rwcard"><button class="rwav" data-kid="${m.id}" title="Open ${esc(m.name)}'s screen">${avatarHTML(m, "avatar sm")}</button>
       <span class="rwgoal">
         <span class="rwnm">${esc(m.name)} · ${fmtStars(bal)}</span>
-        <span class="rwnx">${next ? `${esc(next.emoji || "🎁")} ${esc(next.title)} · ${next.star_cost}⭐` : "no rewards yet"}</span>
+        <span class="rwnx">${shown
+          ? `${esc(shown.emoji || "🎁")} ${esc(shown.title)} · ${shown.star_cost}⭐${goal && best ? ` · ${affordable.length} ready` : ""}`
+          : "no rewards yet"}</span>
         <span class="rwbar"><i style="width:${pct}%"></i></span>
       </span>
-      ${next ? (afford
-        ? `<button class="rwgo" data-red="${next.id}" data-m="${m.id}">Redeem</button>`
-        : `<button class="rwgo off" disabled>${next.star_cost - bal} to go</button>`) : ""}
+      ${best
+        ? `<button class="rwgo" data-red="${best.id}" data-m="${m.id}">Redeem${affordable.length > 1 ? ` (${affordable.length})` : ""}</button>`
+        : goal ? `<button class="rwgo off" disabled>${goal.star_cost - bal} to go</button>` : ""}
     </div>`;
   };
   // One compact button, not N cards: eight pending redemptions used to run straight off
@@ -2571,6 +2631,8 @@ async function renderChoreWall() {
     };
   });
 
+  el.querySelectorAll(".cedit").forEach((b) => { b.onclick = () => openTaskForm(rows[+b.dataset.i].task); });
+  el.querySelectorAll(".cadd").forEach((b) => { b.onclick = () => openTaskForm(null, b.dataset.add || null); });
   el.querySelectorAll(".rwav").forEach((b) => { b.onclick = () => go(`#/kid/${b.dataset.kid}`); });
   el.querySelectorAll(".rwgo:not(.off)").forEach((b) => {
     b.onclick = async () => {
@@ -2977,8 +3039,9 @@ async function renderKidMode() {
   };
   const rows = [];
   for (const t of chores) for (const occ of todaysOccs(t, todayKey, ws, we))
-    rows.push({ task: t, occ, done: isDone(t, occ) });
+    rows.push({ task: t, occ, done: isDone(t, occ), bonus: bonusMultiplier(t.id, occ ?? todayKey) > 1 });
   state._kidRows = rows;
+  const streak = streakFor(mid, chores, doneMap);
 
   if (!state.kidBand) state.kidBand = currentBand();
   const inBand = (r) => (bandOf(r.task) || "anytime") === state.kidBand || (!bandOf(r.task) && state.kidBand === currentBand());
@@ -2988,17 +3051,20 @@ async function renderKidMode() {
   // cheapest reward is the goal; the board is glyphs so it is countable on fingers
   const goal = rewards.slice().sort((a, b) => a.star_cost - b.star_cost)[0];
   const need = goal ? goal.star_cost : 3;
-  const glyphs = Array.from({ length: Math.min(need, 10) }, (_, i) => (i < bal ? "⭐" : "☆")).join("");
+  const boardN = Math.min(need, 5);
+  const filled = Math.min(boardN, Math.round((bal / Math.max(1, need)) * boardN));
+  const glyphs = Array.from({ length: boardN }, (_, i) => (i < filled ? "⭐" : "☆")).join("");
 
   const card = (r, i) => {
     const t = r.task, a = t.icon_url;
     const art = a
       ? (/^(https?:|data:)/.test(a) ? `<img class="kimg" src="${esc(a)}" alt="" />` : `<span class="kemo">${esc(a)}</span>`)
       : `<span class="kemo">${esc((t.title || "?").trim()[0] || "?")}</span>`;
-    return `<div class="kcard${r.done ? " done" : ""}">
+    return `<div class="kcard${r.done ? " done" : ""}${r.bonus && !r.done ? " bonus" : ""}">
       <button class="kmain" data-i="${i}" aria-pressed="${r.done}" aria-label="${esc(t.title)}">
         ${art}<span class="ktitle">${esc(t.title)}</span>
         ${r.done ? `<span class="kcheck">✓</span>` : ""}
+        ${r.bonus && !r.done ? `<span class="kbonus" title="Double stars today!">✨ ×2</span>` : ""}
       </button>
       <button class="kspeak" data-say="${esc(t.title)}" aria-label="Say ${esc(t.title)}">🔊</button>
     </div>`;
@@ -3009,6 +3075,7 @@ async function renderKidMode() {
       <header class="kidtop">
         ${avatarHTML(m, "avatar")}
         <span class="kidname">${esc(m.name)}</span>
+        ${streak >= 2 ? `<span class="kstreak" title="${streak} days in a row">🔥 ${streak}</span>` : ""}
         <span class="kidstars">${pre ? glyphs : `${bal}⭐`}</span>
         <button class="kidhome" id="kidExit" aria-label="Done">🏠</button>
       </header>
@@ -3061,9 +3128,10 @@ function cardPop(node) {
 }
 
 // ---- Add / Edit task form --------------------------------------------------
-function openTaskForm(task) {
+function openTaskForm(task, presetAssignee) {
   const isEdit = !!task;
-  const whoVal = task ? (task.assigned_to || "") : (state.choreMember || state.member.id);
+  const whoVal = task ? (task.assigned_to || "")
+    : (presetAssignee !== undefined ? (presetAssignee || "") : (state.choreMember || state.member.id));
   const rui = parseRuleToUI(task ? task.rrule : null);
   const memberOpts = `<option value=""${!whoVal ? " selected" : ""}>Anyone</option>` +
     state.members.map((m) => `<option value="${m.id}"${whoVal === m.id ? " selected" : ""}>${esc(m.name)}</option>`).join("");

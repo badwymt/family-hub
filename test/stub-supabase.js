@@ -118,8 +118,13 @@ export function createClient(){
         if(!t||!m) return {data:null,error:{message:"member_not_found"}};
         const dup=DB.task_completions.find(c=>c.task_id===t.id&&(c.occurrence_date??null)===(args.p_occurrence_date??null));
         if(dup) return {data:null,error:{message:"already_completed"}};
-        DB.task_completions.push({id:"c"+DB.task_completions.length,family_id:"fam1",task_id:t.id,member_id:m.id,occurrence_date:args.p_occurrence_date??null,star_awarded:t.star_reward,completed_at:new Date().toISOString()});
-        if(t.star_reward>0){ DB.star_ledger.push({member_id:m.id,delta:t.star_reward,reason:"chore"}); m.star_balance+=t.star_reward; }
+        // mirrors bonus_multiplier(): the multiplier is DERIVED, never client-supplied
+        const hx=(s)=>{let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return Math.abs(h);};
+        const dk2=args.p_occurrence_date ?? dk(today);
+        const mult=hx(String(t.id)+String(dk2))%5===0?2:1;
+        const award=Math.max(t.star_reward||0,0)*mult;
+        DB.task_completions.push({id:"c"+DB.task_completions.length,family_id:"fam1",task_id:t.id,member_id:m.id,occurrence_date:args.p_occurrence_date??null,star_awarded:award,completed_at:new Date().toISOString()});
+        if(award>0){ DB.star_ledger.push({member_id:m.id,delta:award,reason:mult>1?"chore_bonus":"chore"}); m.star_balance+=award; }
         return {data:null,error:null};
       }
       if (name==="uncomplete_task") {
