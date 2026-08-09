@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Family Hub — Redesign Mockup</title>
+<style>
+  :root{
+    --bg:#FBF7F0; --surface:#FFFFFF; --sunken:#F4EDE2; --border:#EBE2D4;
+    --text:#2E2A26; --muted:#8A8178; --accent:#FF7A45;
+    --pos:#2FA36B; --neg:#E8595B; --star:#F5B73D;
+    --shadow:0 2px 10px rgba(60,40,20,.07); --radius:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;-webkit-font-smoothing:antialiased}
+  h1,h2,h3{font-family:'Quicksand','Nunito',system-ui,sans-serif;font-weight:700;letter-spacing:-.01em}
+  .tnum{font-variant-numeric:tabular-nums}
+  .app{max-width:1080px;margin:0 auto;padding:20px}
+  /* top bar */
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Quicksand',sans-serif;font-weight:700;font-size:22px}
+  .brand .mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#FFB07A);display:grid;place-items:center;color:#fff;font-size:18px}
+  .nav{display:flex;gap:6px;background:var(--surface);padding:5px;border-radius:14px;box-shadow:var(--shadow)}
+  .nav button{border:0;background:transparent;font:inherit;font-weight:600;color:var(--muted);padding:8px 16px;border-radius:10px;cursor:pointer}
+  .nav button.active{background:var(--accent);color:#fff}
+  .avatars-top{display:flex}
+  .avatars-top .av{margin-left:-8px;border:2px solid var(--bg)}
+  /* avatar */
+  .av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-size:14px;flex:none}
+  .av.sm{width:24px;height:24px;font-size:11px}
+  .av.lg{width:56px;height:56px;font-size:22px}
+  .ring{box-shadow:0 0 0 2px #fff}
+  /* card */
+  .card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+  .panel{display:none}
+  .panel.active{display:block}
+  /* calendar header */
+  .calhead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px}
+  .datenav{display:flex;align-items:center;gap:10px}
+  .datenav h2{font-size:22px}
+  .arrowbtn,.todaypill{border:1px solid var(--border);background:var(--surface);border-radius:10px;cursor:pointer;font:inherit;font-weight:600;color:var(--text)}
+  .arrowbtn{width:34px;height:34px}
+  .todaypill{padding:6px 14px;color:var(--accent);border-color:#FFD9C6}
+  .seg{display:flex;background:var(--sunken);border-radius:12px;padding:4px}
+  .seg button{border:0;background:transparent;font:inherit;font-weight:600;color:var(--muted);padding:7px 18px;border-radius:9px;cursor:pointer}
+  .seg button.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+  /* people filter */
+  .filterrow{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .filterrow .lbl{color:var(--muted);font-size:13px;font-weight:600;margin-right:2px}
+  .chip{display:flex;align-items:center;gap:7px;padding:5px 12px 5px 5px;border-radius:999px;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;font-weight:600;font-size:13px;color:var(--text);transition:.15s}
+  .chip.off{opacity:.38;filter:grayscale(.5)}
+  /* untimed strip */
+  .untimed{display:flex;gap:8px;flex-wrap:wrap;padding:10px;background:var(--sunken);border-radius:12px;margin-bottom:12px}
+  .untimed .u-lbl{color:var(--muted);font-size:12px;font-weight:700;align-self:center;text-transform:uppercase;letter-spacing:.04em}
+  .ev-chip{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;color:#fff;font-weight:600;font-size:13px}
+  /* day grid */
+  .grid{position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--border)}
+  .hour{display:flex;height:56px;border-top:1px solid var(--border)}
+  .hour:first-child{border-top:0}
+  .hour .h-lbl{width:64px;flex:none;color:var(--muted);font-size:12px;padding:4px 8px;text-align:right;background:var(--sunken)}
+  .hour .h-slot{flex:1;position:relative;cursor:pointer}
+  .hour .h-slot:hover::after{content:'+ add';position:absolute;left:8px;top:6px;color:var(--muted);font-size:12px;font-weight:600}
+  .events-layer{position:absolute;top:0;left:64px;right:0;bottom:0;pointer-events:none}
+  .block{position:absolute;left:8px;right:8px;border-radius:10px;padding:7px 10px;color:#fff;pointer-events:auto;cursor:pointer;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+  .block .b-title{font-weight:700;font-size:13px}
+  .block .b-time{font-size:11px;opacity:.9}
+  .block .b-av{position:absolute;top:6px;right:6px}
+  .nowbar{position:absolute;left:56px;right:0;height:2px;background:var(--accent);z-index:5}
+  .nowbar::before{content:'';position:absolute;left:0;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  /* week */
+  .weekgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .weekcol{background:var(--sunken);border-radius:10px;padding:8px;min-height:160px}
+  .weekcol h4{font-size:12px;color:var(--muted);text-align:center;margin-bottom:8px;font-family:'Inter',sans-serif}
+  .weekcol h4.today{color:var(--accent)}
+  .wk-ev{font-size:11px;color:#fff;padding:4px 7px;border-radius:7px;margin-bottom:5px;font-weight:600}
+  /* month */
+  .monthgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+  .dow{text-align:center;font-size:12px;color:var(--muted);font-weight:700;padding-bottom:4px}
+  .mcell{background:var(--surface);border:1px solid var(--border);border-radius:9px;min-height:74px;padding:6px;cursor:pointer;transition:.12s}
+  .mcell:hover{border-color:var(--accent)}
+  .mcell .d{font-size:13px;font-weight:600}
+  .mcell.dim .d{color:var(--muted);opacity:.5}
+  .mcell.today .d{background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:grid;place-items:center}
+  .dots{display:flex;gap:3px;flex-wrap:wrap;margin-top:6px}
+  .dot{width:8px;height:8px;border-radius:50%}
+  /* inline edit panel / sheet */
+  .overlay{position:fixed;inset:0;background:rgba(46,42,38,.4);display:none;align-items:flex-end;justify-content:center;z-index:50}
+  .overlay.show{display:flex}
+  .sheet{background:var(--surface);width:100%;max-width:480px;border-radius:20px 20px 0 0;padding:22px;max-height:84vh;overflow:auto;animation:up .25s ease}
+  @media(min-width:560px){.overlay{align-items:center}.sheet{border-radius:20px}}
+  @keyframes up{from{transform:translateY(30px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .sheet h3{font-size:19px;margin-bottom:14px}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+  .field input,.field textarea{width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font:inherit;background:var(--bg)}
+  .field input:focus,.field textarea:focus{outline:0;border-color:var(--accent)}
+  .whochips{display:flex;gap:8px;flex-wrap:wrap}
+  .whochip{display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;border-radius:999px;border:1.5px solid var(--border);cursor:pointer;font-weight:600;font-size:13px}
+  .whochip.sel{border-color:var(--accent);background:#FFF1EA}
+  .sheetbtns{display:flex;gap:10px;margin-top:8px}
+  .btn{flex:1;border:0;border-radius:12px;padding:12px;font:inherit;font-weight:700;cursor:pointer}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.ghost{background:var(--sunken);color:var(--text)}
+  .btn.danger{background:transparent;color:var(--neg);flex:none;padding:12px 16px}
+  /* family / members */
+  .memrow{display:flex;align-items:center;gap:14px;padding:14px;border-radius:14px;background:var(--bg);margin-bottom:10px}
+  .memrow .info{flex:1}
+  .memrow .info .nm{font-weight:700;font-size:16px}
+  .memrow .info .rl{color:var(--muted);font-size:13px}
+  .swatchrow{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .swatch{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent}
+  .swatch.sel{border-color:var(--text)}
+  .emojirow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .emojibtn{width:38px;height:38px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);font-size:20px;cursor:pointer}
+  .emojibtn.sel{border-color:var(--accent);background:#FFF1EA}
+  .addmem{width:100%;border:2px dashed var(--border);background:transparent;border-radius:14px;padding:14px;font:inherit;font-weight:700;color:var(--muted);cursor:pointer}
+  /* finance + chores preview */
+  .balhead{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+  .balbox{background:var(--bg);border-radius:14px;padding:14px;text-align:center;cursor:pointer;border:1.5px solid transparent}
+  .balbox:hover{border-color:var(--border)}
+  .balbox .lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .balbox .amt{font-size:24px;font-weight:800;margin-top:2px}
+  .headline{font-family:'Quicksand',sans-serif;font-size:20px;font-weight:700;margin-bottom:14px}
+  .exprow{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--border)}
+  .exprow .ex-main{flex:1}
+  .exprow .ex-main .t{font-weight:600}
+  .exprow .ex-main .s{font-size:12px;color:var(--muted)}
+  .exprow .amt{font-weight:700}
+  .chorecard{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:var(--bg);margin-bottom:8px}
+  .chorecard .ck{width:26px;height:26px;border-radius:50%;border:2px solid var(--border);flex:none;cursor:pointer;display:grid;place-items:center;color:#fff;font-size:14px}
+  .chorecard.done .ck{background:var(--pos);border-color:var(--pos)}
+  .chorecard.done .t{text-decoration:line-through;color:var(--muted)}
+  .chorecard .t{flex:1;font-weight:600}
+  .starpill{display:flex;align-items:center;gap:4px;color:var(--star);font-weight:800}
+  .rewardcard{background:var(--bg);border-radius:14px;padding:14px;margin-top:14px}
+  .progbar{height:10px;border-radius:999px;background:var(--sunken);overflow:hidden;margin-top:8px}
+  .progbar i{display:block;height:100%;background:linear-gradient(90deg,var(--star),#FFD27A);border-radius:999px}
+  .note{font-size:12px;color:var(--muted);margin-top:10px}
+  .legend{font-size:12px;color:var(--muted);background:var(--sunken);border-radius:10px;padding:8px 12px;margin-bottom:14px}
+  .confetti{position:fixed;font-size:24px;animation:fall 1.6s linear forwards;z-index:60;pointer-events:none}
+  @keyframes fall{to{transform:translateY(100vh) rotate(360deg);opacity:0}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><span class="mark">🏡</span> Family Hub</div>
+    <div class="nav" id="nav">
+      <button class="active" data-p="cal">Calendar</button>
+      <button data-p="chores">Chores</button>
+      <button data-p="finance">Finance</button>
+      <button data-p="family">Family</button>
+    </div>
+    <div class="avatars-top" id="topAvatars"></div>
+  </div>
+
+  <div class="legend">Interactive mockup of the proposed redesign — warm palette, one color per person, avatars everywhere. Click a calendar block to edit inline, toggle people, switch Day/Week/Month, and try the Family tab to edit names, colors & avatars.</div>
+
+  <!-- CALENDAR -->
+  <div class="panel active" id="p-cal">
+    <div class="card">
+      <div class="calhead">
+        <div class="datenav">
+          <button class="arrowbtn">‹</button>
+          <h2 id="calTitle">Sunday, June 14</h2>
+          <button class="arrowbtn">›</button>
+          <button class="todaypill">Today</button>
+        </div>
+        <div class="seg" id="viewSeg">
+          <button class="active" data-v="day">Day</button>
+          <button data-v="week">Week</button>
+          <button data-v="month">Month</button>
+        </div>
+      </div>
+      <div class="filterrow" id="filterRow"><span class="lbl">Showing:</span></div>
+
+      <!-- DAY -->
+      <div id="view-day">
+        <div class="untimed" id="untimed"><span class="u-lbl">All day</span></div>
+        <div class="grid" id="dayGrid"></div>
+      </div>
+      <!-- WEEK -->
+      <div id="view-week" style="display:none"></div>
+      <!-- MONTH -->
+      <div id="view-month" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- CHORES -->
+  <div class="panel" id="p-chores">
+    <div class="card">
+      <h2 style="margin-bottom:4px">Sam's chores · Sunday</h2>
+      <p class="note" style="margin-top:0">Clear the whole list to unlock a celebration 🎉</p>
+      <div id="choreList" style="margin-top:14px"></div>
+      <div class="rewardcard">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <strong>🍦 Ice-cream trip</strong>
+          <span class="starpill tnum" id="starCount">★ 38 / 50</span>
+        </div>
+        <div class="progbar"><i id="starBar" style="width:76%"></i></div>
+        <div class="note">12 stars to go — earned by clearing daily lists.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FINANCE -->
+  <div class="panel" id="p-finance">
+    <div class="card">
+      <div class="headline">You're owed <span style="color:var(--pos)">€40</span> this month 🙂</div>
+      <div class="balhead">
+        <div class="balbox"><div class="lbl">You owe</div><div class="amt tnum" style="color:var(--neg)">€12</div></div>
+        <div class="balbox"><div class="lbl">You're owed</div><div class="amt tnum" style="color:var(--pos)">€52</div></div>
+        <div class="balbox"><div class="lbl">Net</div><div class="amt tnum">€40</div></div>
+      </div>
+      <div id="expList"></div>
+      <button class="btn primary" style="margin-top:16px" onclick="settle()">Settle all up</button>
+    </div>
+  </div>
+
+  <!-- FAMILY -->
+  <div class="panel" id="p-family">
+    <div class="card">
+      <h2 style="margin-bottom:4px">Family members</h2>
+      <p class="note" style="margin-top:0;margin-bottom:14px">Edit names, colors and avatars. Changes update identity across every screen.</p>
+      <div id="memList"></div>
+      <button class="addmem">＋ Add member</button>
+    </div>
+  </div>
+</div>
+
+<!-- inline edit / sheet overlay -->
+<div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+
+<script>
+const members=[
+  {id:'m1',name:'Dad',role:'Parent',color:'#E8595B',emoji:'🧔'},
+  {id:'m2',name:'Mom',role:'Parent',color:'#3D8BCD',emoji:'👩'},
+  {id:'m3',name:'Sam',role:'Kid',color:'#3FA796',emoji:'⚽'},
+  {id:'m4',name:'Lily',role:'Kid',color:'#C77DD8',emoji:'🦄'},
+];
+const palette=['#E8595B','#3D8BCD','#3FA796','#C77DD8','#E8A23D','#7C83DB','#5BA85B','#E07AA0'];
+const emojis=['🧔','👩','⚽','🦄','🐯','🐼','🦊','🐙','🚀','🎨','🎸','🌟'];
+const filterState={};members.forEach(m=>filterState[m.id]=true);
+const M=id=>members.find(m=>m.id===id);
+
+let events=[
+  {id:1,title:'School run',who:['m1'],start:7.5,end:8.25,loc:'',allday:false},
+  {id:2,title:'Sam — football practice',who:['m3'],start:16,end:17.5,loc:'Community pitch',allday:false},
+  {id:3,title:'Mom — dentist',who:['m2'],start:11,end:12,loc:'Dr. Reed',allday:false},
+  {id:4,title:'Family dinner',who:['m1','m2','m3','m4'],start:18.5,end:19.5,loc:'Home',allday:false},
+  {id:5,title:'Lily — playdate',who:['m4'],start:14,end:15.5,loc:'Ava\'s house',allday:false},
+  {id:6,title:'Bin day ♻️',who:['m1'],start:0,end:0,allday:true},
+];
+let seq=100;
+
+function av(m,cls=''){return `<span class="av ${cls}" style="background:${m.color}">${m.emoji||m.name[0]}</span>`}
+
+// top avatars
+document.getElementById('topAvatars').innerHTML=members.map(m=>av(m,'sm ring')).join('');
+
+/* ---------- people filter ---------- */
+function renderFilter(){
+  const r=document.getElementById('filterRow');
+  r.querySelectorAll('.chip').forEach(c=>c.remove());
+  members.forEach(m=>{
+    const c=document.createElement('div');
+    c.className='chip'+(filterState[m.id]?'':' off');
+    c.innerHTML=`${av(m,'sm')} ${m.name}`;
+    c.onclick=()=>{filterState[m.id]=!filterState[m.id];renderFilter();renderActiveView()};
+    r.appendChild(c);
+  });
+}
+const visible=e=>e.who.some(w=>filterState[w]);
+
+/* ---------- DAY view ---------- */
+function renderDay(){
+  const u=document.getElementById('untimed');
+  u.querySelectorAll('.ev-chip').forEach(c=>c.remove());
+  events.filter(e=>e.allday&&visible(e)).forEach(e=>{
+    const m=M(e.who[0]);const c=document.createElement('div');
+    c.className='ev-chip';c.style.background=m.color;
+    c.innerHTML=`${e.title}`;c.onclick=()=>editEvent(e.id);u.appendChild(c);
+  });
+  const g=document.getElementById('dayGrid');g.innerHTML='';
+  const startH=6,endH=22;
+  for(let h=startH;h<=endH;h++){
+    const row=document.createElement('div');row.className='hour';
+    const hr=h%12||12,ap=h<12?'am':'pm';
+    row.innerHTML=`<div class="h-lbl">${hr} ${ap}</div><div class="h-slot" data-h="${h}"></div>`;
+    g.appendChild(row);
+  }
+  const layer=document.createElement('div');layer.className='events-layer';
+  const pxH=56;
+  events.filter(e=>!e.allday&&visible(e)).forEach(e=>{
+    const top=(e.start-startH)*pxH, h=Math.max((e.end-e.start)*pxH-4,30);
+    const m=M(e.who[0]);
+    const b=document.createElement('div');b.className='block';
+    b.style.cssText=`top:${top+2}px;height:${h}px;background:${m.color}`;
+    if(e.who.length>1){const m2=M(e.who[1]);b.style.background=`linear-gradient(135deg,${m.color} 60%,${m2.color} 60%)`}
+    const fmt=t=>{const hh=Math.floor(t),mm=Math.round((t-hh)*60);return (hh%12||12)+(mm?':'+String(mm).padStart(2,'0'):'')+(hh<12?'am':'pm')};
+    b.innerHTML=`<div class="b-title">${e.title}</div><div class="b-time tnum">${fmt(e.start)}–${fmt(e.end)}</div><span class="b-av av sm ring">${m.emoji}</span>`;
+    b.onclick=()=>editEvent(e.id);
+    layer.appendChild(b);
+  });
+  // now bar at 13:10 demo
+  const nowT=13.17;const nb=document.createElement('div');nb.className='nowbar';
+  nb.style.top=((nowT-startH)*pxH)+'px';layer.appendChild(nb);
+  g.appendChild(layer);
+  g.querySelectorAll('.h-slot').forEach(s=>s.onclick=()=>newEvent(+s.dataset.h));
+}
+
+/* ---------- WEEK view ---------- */
+function renderWeek(){
+  const days=['Mon 8','Tue 9','Wed 10','Thu 11','Fri 12','Sat 13','Sun 14'];
+  const sample=[[1],[3],[],[2,5],[1],[],[2,4]];
+  const w=document.getElementById('view-week');
+  w.innerHTML='<div class="weekgrid">'+days.map((d,i)=>{
+    const evs=sample[i].map(id=>events.find(e=>e.id===id)).filter(e=>e&&visible(e));
+    return `<div class="weekcol"><h4 class="${i===6?'today':''}">${d}</h4>${
+      evs.map(e=>{const m=M(e.who[0]);return `<div class="wk-ev" style="background:${m.color}" onclick="editEvent(${e.id})">${e.title.split('—').pop().trim()}</div>`}).join('')
+    }</div>`;
+  }).join('')+'</div>';
+}
+
+/* ---------- MONTH view ---------- */
+function renderMonth(){
+  const dow=['S','M','T','W','T','F','S'];
+  const m=document.getElementById('view-month');
+  let html='<div class="monthgrid">'+dow.map(d=>`<div class="dow">${d}</div>`).join('');
+  // June 2026 starts on Monday; pad with 1 leading from May
+  const lead=[31];const totalDays=30;const today=14;
+  // build cells: 1 lead (Sun May31), then 1..30
+  const cells=[{n:31,dim:true}];
+  for(let i=1;i<=totalDays;i++)cells.push({n:i,dim:false});
+  cells.forEach(c=>{
+    let dots='';
+    if(!c.dim){
+      // assign pseudo events to some days
+      const owners=[];
+      if(c.n%4===0)owners.push('m1');if(c.n%3===0)owners.push('m3');if(c.n%5===0)owners.push('m2');if(c.n===today)owners.push('m4');
+      dots=owners.filter(o=>filterState[o]).map(o=>`<span class="dot" style="background:${M(o).color}"></span>`).join('');
+    }
+    html+=`<div class="mcell ${c.dim?'dim':''} ${c.n===today&&!c.dim?'today':''}" ${!c.dim?`onclick="monthSheet(${c.n})"`:''}><div class="d">${c.n}</div><div class="dots">${dots}</div></div>`;
+  });
+  html+='</div>';m.innerHTML=html;
+}
+function monthSheet(n){
+  const evs=events.filter(visible);
+  showSheet(`<h3>June ${n}</h3>${evs.slice(0,4).map(e=>{const m=M(e.who[0]);return `<div class="exprow"><span class="av sm" style="background:${m.color}">${m.emoji}</span><div class="ex-main"><div class="t">${e.title}</div><div class="s">${e.allday?'All day':e.start+':00'}</div></div></div>`}).join('')}<div class="sheetbtns"><button class="btn ghost" onclick="closeSheet()">Close</button><button class="btn primary" onclick="closeSheet();setView('day')">Open full day →</button></div>`);
+}
+
+/* ---------- view switching ---------- */
+let curView='day';
+function setView(v){
+  curView=v;
+  document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
+  document.getElementById('view-day').style.display=v==='day'?'block':'none';
+  document.getElementById('view-week').style.display=v==='week'?'block':'none';
+  document.getElementById('view-month').style.display=v==='month'?'block':'none';
+  document.getElementById('calTitle').textContent=v==='day'?'Sunday, June 14':v==='week'?'Jun 8 – 14':'June 2026';
+  renderActiveView();
+}
+function renderActiveView(){curView==='day'?renderDay():curView==='week'?renderWeek():renderMonth()}
+document.getElementById('viewSeg').onclick=e=>{if(e.target.dataset.v)setView(e.target.dataset.v)};
+
+/* ---------- event edit sheet ---------- */
+function editEvent(id){const e=events.find(x=>x.id===id);openEventSheet(e)}
+function newEvent(h){openEventSheet({id:++seq,title:'',who:['m1','m2','m3','m4'],start:h,end:h+1,loc:'',allday:false,_new:true})}
+function openEventSheet(e){
+  const fmt=t=>String(Math.floor(t)).padStart(2,'0')+':'+String(Math.round((t-Math.floor(t))*60)).padStart(2,'0');
+  showSheet(`<h3>${e._new?'New event':'Edit event'}</h3>
+    <div class="field"><label>Title</label><input id="f-title" value="${e.title.replace(/"/g,'&quot;')}" placeholder="What's happening?"></div>
+    <div class="field"><label>Who's this for?</label><div class="whochips" id="f-who">${members.map(m=>`<div class="whochip ${e.who.includes(m.id)?'sel':''}" data-id="${m.id}">${av(m,'sm')} ${m.name}</div>`).join('')}</div></div>
+    <div style="display:flex;gap:10px">
+      <div class="field" style="flex:1"><label>Start</label><input id="f-start" type="time" value="${fmt(e.start)}"></div>
+      <div class="field" style="flex:1"><label>End</label><input id="f-end" type="time" value="${fmt(e.end)}"></div>
+    </div>
+    <div class="field"><label>Location</label><input id="f-loc" value="${(e.loc||'').replace(/"/g,'&quot;')}" placeholder="Add a place"></div>
+    <div class="field"><label>Notes</label><textarea rows="2" placeholder="Anything to remember…"></textarea></div>
+    <div class="sheetbtns">
+      ${e._new?'':'<button class="btn danger" onclick="delEvent('+e.id+')">Delete</button>'}
+      <button class="btn ghost" onclick="closeSheet()">Cancel</button>
+      <button class="btn primary" onclick="saveEvent(${e.id},${!!e._new})">Save</button>
+    </div>`);
+  document.querySelectorAll('#f-who .whochip').forEach(c=>c.onclick=()=>c.classList.toggle('sel'));
+  window._editing=e;
+}
+function saveEvent(id,isNew){
+  const e=window._editing;
+  const who=[...document.querySelectorAll('#f-who .whochip.sel')].map(c=>c.dataset.id);
+  const ph=v=>{const[h,m]=v.split(':').map(Number);return h+m/60};
+  const obj={id,title:document.getElementById('f-title').value||'Untitled',who:who.length?who:['m1'],
+    start:ph(document.getElementById('f-start').value),end:ph(document.getElementById('f-end').value),
+    loc:document.getElementById('f-loc').value,allday:false};
+  if(isNew)events.push(obj);else Object.assign(events.find(x=>x.id===id),obj);
+  closeSheet();renderActiveView();
+}
+function delEvent(id){events=events.filter(e=>e.id!==id);closeSheet();renderActiveView()}
+
+/* ---------- family / members ---------- */
+function renderMembers(){
+  const l=document.getElementById('memList');
+  l.innerHTML=members.map(m=>`<div class="memrow">${av(m,'lg ring')}<div class="info"><div class="nm">${m.name}</div><div class="rl">${m.role}</div></div><button class="btn ghost" style="flex:none;padding:10px 16px" onclick="editMember('${m.id}')">Edit</button></div>`).join('');
+}
+function editMember(id){
+  const m=M(id);
+  showSheet(`<h3>Edit member</h3>
+    <div style="display:flex;justify-content:center;margin-bottom:14px">${av(m,'lg ring')}</div>
+    <div class="field"><label>Name</label><input id="m-name" value="${m.name}"></div>
+    <div class="field"><label>Color</label><div class="swatchrow" id="m-colors">${palette.map(c=>`<div class="swatch ${c===m.color?'sel':''}" style="background:${c}" data-c="${c}"></div>`).join('')}</div></div>
+    <div class="field"><label>Avatar</label><div class="emojirow" id="m-emojis">${emojis.map(e=>`<button class="emojibtn ${e===m.emoji?'sel':''}" data-e="${e}">${e}</button>`).join('')}</div></div>
+    <div class="field"><label>Role</label><input id="m-role" value="${m.role}"></div>
+    <div class="sheetbtns"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveMember('${id}')">Save</button></div>`);
+  let pc=m.color,pe=m.emoji;
+  document.querySelectorAll('#m-colors .swatch').forEach(s=>s.onclick=()=>{pc=s.dataset.c;document.querySelectorAll('#m-colors .swatch').forEach(x=>x.classList.remove('sel'));s.classList.add('sel');window._pc=pc});
+  document.querySelectorAll('#m-emojis .emojibtn').forEach(b=>b.onclick=()=>{pe=b.dataset.e;document.querySelectorAll('#m-emojis .emojibtn').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');window._pe=pe});
+  window._pc=pc;window._pe=pe;
+}
+function saveMember(id){
+  const m=M(id);
+  m.name=document.getElementById('m-name').value||m.name;
+  m.role=document.getElementById('m-role').value||m.role;
+  m.color=window._pc;m.emoji=window._pe;
+  closeSheet();
+  document.getElementById('topAvatars').innerHTML=members.map(x=>av(x,'sm ring')).join('');
+  renderMembers();renderFilter();renderActiveView();renderChores();renderExpenses();
+}
+
+/* ---------- chores ---------- */
+let chores=[
+  {id:'c1',t:'Make your bed',stars:3,done:true},
+  {id:'c2',t:'Feed the cat 🐱',stars:2,done:true},
+  {id:'c3',t:'Homework',stars:5,done:false},
+  {id:'c4',t:'Tidy room',stars:4,done:false},
+];
+function renderChores(){
+  const m=M('m3');
+  document.getElementById('choreList').innerHTML=chores.map(c=>`<div class="chorecard ${c.done?'done':''}"><div class="ck" onclick="toggleChore('${c.id}')">${c.done?'✓':''}</div><div class="t">${c.t}</div><span class="starpill tnum">★ ${c.stars}</span></div>`).join('');
+}
+function toggleChore(id){
+  const c=chores.find(x=>x.id===id);c.done=!c.done;renderChores();
+  if(chores.every(x=>x.done))celebrate();
+}
+function celebrate(){
+  const es=['🎉','⭐','🎊','🌟','✨','🥳'];
+  for(let i=0;i<28;i++){const d=document.createElement('div');d.className='confetti';d.textContent=es[i%es.length];d.style.left=Math.random()*100+'vw';d.style.top='-40px';d.style.animationDelay=Math.random()*0.6+'s';document.body.appendChild(d);setTimeout(()=>d.remove(),2200)}
+}
+
+/* ---------- finance ---------- */
+const expenses=[
+  {who:'m2',t:'Groceries',s:'Mom paid · split 4 ways',amt:'+€18',pos:true},
+  {who:'m1',t:'Lily — swim lessons',s:'You paid',amt:'+€22',pos:true},
+  {who:'m1',t:'Pizza night',s:'Dad covered you',amt:'−€12',pos:false},
+];
+function renderExpenses(){
+  document.getElementById('expList').innerHTML=expenses.map(e=>{const m=M(e.who);return `<div class="exprow"><span class="av" style="background:${m.color}">${m.emoji}</span><div class="ex-main"><div class="t">${e.t}</div><div class="s">${e.s}</div></div><span class="amt tnum" style="color:${e.pos?'var(--pos)':'var(--neg)'}">${e.amt}</span></div>`}).join('');
+}
+function settle(){celebrate();document.querySelector('#p-finance .headline').innerHTML='Everyone\'s settled up 🎉';}
+
+/* ---------- sheet plumbing ---------- */
+function showSheet(html){document.getElementById('sheet').innerHTML=html;document.getElementById('overlay').classList.add('show')}
+function closeSheet(){document.getElementById('overlay').classList.remove('show')}
+document.getElementById('overlay').onclick=e=>{if(e.target.id==='overlay')closeSheet()};
+
+/* ---------- nav ---------- */
+document.getElementById('nav').onclick=e=>{
+  if(!e.target.dataset.p)return;
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b===e.target));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('p-'+e.target.dataset.p).classList.add('active');
+};
+
+/* init */
+renderFilter();setView('day');renderMembers();renderChores();renderExpenses();
+</script>
+</body>
+</html>

@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Family Hub — Mobile Prototype v2</title>
+<style>
+  :root{
+    --bg:#FBF7F0;--surface:#FFFFFF;--sunken:#F4EDE2;--border:#EBE2D4;
+    --text:#2E2A26;--muted:#8A8178;--accent:#FF7A45;--accent-d:#E2602E;
+    --pos:#2FA36B;--neg:#E8595B;--star:#F5B73D;--meal:#7C83DB;
+    --dad:#E8595B;--mom:#3D8BCD;--sam:#3FA796;--lily:#C77DD8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Inter',system-ui,sans-serif;background:#E8DFD0;color:var(--text);line-height:1.5;display:flex;justify-content:center;padding:20px;min-height:100vh}
+  h1,h2,h3{font-family:'Quicksand','Nunito',system-ui,sans-serif;font-weight:700;letter-spacing:-.01em}
+  .tnum{font-variant-numeric:tabular-nums}
+  /* phone */
+  .phone{width:390px;max-width:100%;height:800px;background:var(--bg);border-radius:34px;box-shadow:0 18px 50px rgba(60,40,20,.28);overflow:hidden;position:relative;display:flex;flex-direction:column;border:1px solid #d8cdb9}
+  .status{height:30px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted);font-weight:600;flex:none}
+  .screen{flex:1;overflow-y:auto;padding:0 0 86px}
+  .screen::-webkit-scrollbar{display:none}
+  .hd{padding:10px 18px 12px;position:sticky;top:0;background:var(--bg);z-index:8}
+  .hd h1{font-size:23px}
+  .hd .sub{color:var(--muted);font-size:13px}
+  /* nav */
+  .tabbar{position:absolute;left:0;right:0;bottom:0;height:74px;background:var(--surface);border-top:1px solid var(--border);display:flex;padding-bottom:12px}
+  .tabbar button{flex:1;border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font:inherit;font-size:10px;font-weight:600;cursor:pointer;padding-top:10px}
+  .tabbar button svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .tabbar button.on{color:var(--accent)}
+  /* avatar */
+  .av{border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;flex:none}
+  .av.xs{width:22px;height:22px;font-size:11px}.av.s{width:30px;height:30px;font-size:13px}
+  .av.m{width:44px;height:44px;font-size:18px}.av.l{width:64px;height:64px;font-size:26px}
+  .ring{box-shadow:0 0 0 2px #fff}
+  .card{background:var(--surface);border-radius:16px;box-shadow:0 2px 10px rgba(60,40,20,.06);padding:16px;margin:0 18px 14px}
+  .btn{border:0;border-radius:12px;padding:12px;font:inherit;font-weight:700;cursor:pointer;width:100%}
+  .btn.primary{background:var(--accent);color:#fff}.btn.ghost{background:var(--sunken);color:var(--text)}
+  .fab{position:absolute;right:18px;bottom:90px;width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;border:0;font-size:28px;box-shadow:0 6px 18px rgba(255,122,69,.45);cursor:pointer;z-index:9}
+  .seg{display:flex;background:var(--sunken);border-radius:12px;padding:4px;margin:0 18px 14px}
+  .seg button{flex:1;border:0;background:none;font:inherit;font-weight:600;color:var(--muted);padding:8px 0;border-radius:9px;cursor:pointer;font-size:13px}
+  .seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.08)}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1.5px solid var(--border);background:var(--surface);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+  .pill.on{border-color:var(--accent);background:#FFF1EA;color:var(--accent-d)}
+  /* sheet */
+  .ov{position:absolute;inset:0;background:rgba(46,42,38,.45);display:none;align-items:flex-end;z-index:30}
+  .ov.show{display:flex}
+  .sheet{background:var(--surface);width:100%;border-radius:22px 22px 0 0;padding:20px;max-height:88%;overflow:auto;animation:up .25s}
+  @keyframes up{from{transform:translateY(40px)}to{transform:translateY(0)}}
+  .sheet h3{font-size:19px;margin-bottom:14px}
+  .field{margin-bottom:13px}
+  .field label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+  .field input,.field select{width:100%;border:1.5px solid var(--border);border-radius:10px;padding:11px;font:inherit;background:var(--bg)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chips .c{display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;border-radius:999px;border:1.5px solid var(--border);cursor:pointer;font-size:13px;font-weight:600}
+  .chips .c.sel{border-color:var(--accent);background:#FFF1EA}
+  .stepper{display:flex;align-items:center;gap:14px}
+  .stepper button{width:38px;height:38px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);font-size:20px;cursor:pointer}
+  .row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)}
+  .ck{width:28px;height:28px;border-radius:50%;border:2px solid var(--border);flex:none;cursor:pointer;display:grid;place-items:center;color:#fff;font-size:15px}
+  .ck.on{background:var(--pos);border-color:var(--pos)}
+  .bar{height:10px;border-radius:999px;background:var(--sunken);overflow:hidden;margin-top:7px}
+  .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--star),#FFD27A)}
+  .conf{position:absolute;font-size:26px;animation:fall 1.7s linear forwards;z-index:40;pointer-events:none}
+  @keyframes fall{to{transform:translateY(840px) rotate(420deg);opacity:0}}
+  .grid-h .hr{display:flex;height:52px;border-top:1px solid var(--border)}
+  .grid-h .hr .l{width:54px;font-size:11px;color:var(--muted);padding:3px 6px;flex:none}
+  .blk{position:absolute;left:60px;right:14px;border-radius:9px;padding:6px 9px;color:#fff;overflow:hidden;font-size:12px}
+  .blk b{font-weight:700;display:block}.blk i{font-style:normal;opacity:.9;font-size:11px}
+  .tag{font-size:11px;padding:2px 9px;border-radius:999px;font-weight:600;color:#fff}
+  .mut{color:var(--muted);font-size:12px}
+  .lift{cursor:pointer;transition:.12s}.lift:active{transform:scale(.98)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="status tnum">9:41 · Family Hub</div>
+  <div class="screen" id="screen"></div>
+  <div class="tabbar" id="tabbar"></div>
+</div>
+<div class="ov" id="ov"><div class="sheet" id="sheet"></div></div>
+
+<script>
+/* ---------------- state ---------------- */
+const members=[
+  {id:'m1',name:'Dad',role:'Parent',color:'#E8595B',ini:'D',stars:0},
+  {id:'m2',name:'Mom',role:'Parent',color:'#3D8BCD',ini:'M',stars:0},
+  {id:'m3',name:'Sam',role:'Kid',color:'#3FA796',ini:'S',stars:38},
+  {id:'m4',name:'Lily',role:'Kid',color:'#C77DD8',ini:'L',stars:21},
+];
+const M=id=>members.find(m=>m.id===id);
+const av=(m,c='s',extra='')=>`<span class="av ${c} ${extra}" style="background:${m.color}">${m.ini}</span>`;
+
+let chores={
+  m3:[{id:1,t:'Make your bed',stars:3,due:'Today',rep:'Daily',done:true},
+      {id:2,t:'Feed the cat',stars:2,due:'Today',rep:'Daily',done:true},
+      {id:3,t:'Homework',stars:5,due:'Today',rep:'Weekdays',done:false},
+      {id:4,t:'Tidy room',stars:4,due:'Sat',rep:'Weekly',done:false}],
+  m4:[{id:5,t:'Brush teeth',stars:2,due:'Today',rep:'Daily',done:true},
+      {id:6,t:'Put toys away',stars:3,due:'Today',rep:'Daily',done:false}],
+  m1:[],m2:[]
+};
+let rewards={
+  m3:[{id:'r1',t:'Ice-cream trip',cost:50},{id:'r2',t:'Movie night',cost:30},{id:'r3',t:'New Lego set',cost:120}],
+  m4:[{id:'r4',t:'Sticker pack',cost:15},{id:'r5',t:'Trip to park',cost:40}],
+  m1:[],m2:[]
+};
+let rewardLog={m1:[],m2:[],m3:[],m4:[]};
+let cseq=100,rseq=100;
+
+let events=[
+  {id:1,title:'Mom — dentist',who:'m2',s:11,e:12,rep:'Once'},
+  {id:2,title:'Lily — playdate',who:'m4',s:14,e:15.5,rep:'Once'},
+  {id:3,title:'Sam — football',who:'m3',s:16,e:17.5,rep:'Weekly'},
+];
+let meals=[{id:'me1',title:'Pasta night',type:'Dinner',day:'Sun'}];
+
+let haveList=[{t:'Milk',cat:'Fridge'},{t:'Eggs',cat:'Fridge'},{t:'Butter',cat:'Fridge'},{t:'Pasta',cat:'Pantry'},{t:'Rice',cat:'Pantry'}];
+let buyList=[{t:'Cheese',store:'Costco',got:false},{t:'Bananas',store:'Supermarket',got:false},{t:'Paper towels',store:'Costco',got:false},{t:'Toothpaste',store:'Pharmacy',got:false}];
+let stores=['All','Costco','Supermarket','Pharmacy'];
+let buyFilter='All';
+let storeColors={Costco:'#3D8BCD',Supermarket:'#3FA796',Pharmacy:'#C77DD8'};
+const morePal=['#E8A23D','#7C83DB','#5BA85B','#E07AA0','#E8595B','#3FA796'];
+function assignStoreColor(s){if(!storeColors[s])storeColors[s]=morePal[Object.keys(storeColors).length%morePal.length]}
+let expenseCats=['🛒 Groceries','🏠 Rent','💡 Utilities','🧒 Kids','🎉 Fun','🚗 Transport'];
+
+let expenses=[
+  {who:'m2',t:'Groceries',cat:'🛒',amt:84,pos:true,when:'2d ago',rec:false},
+  {who:'m1',t:'Rent',cat:'🏠',amt:1600,pos:false,when:'Jun 1',rec:true},
+  {who:'m1',t:'Lily — swim',cat:'🏊',amt:45,pos:true,when:'3d ago',rec:false},
+  {who:'m2',t:'Netflix',cat:'📺',amt:15.49,pos:false,when:'Jun 4',rec:true},
+];
+
+let nav='cal', calView='day', choreMember=null;
+
+/* ---------------- nav ---------------- */
+const tabs=[
+  {id:'cal',label:'Calendar',icon:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'},
+  {id:'chores',label:'Chores',icon:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'},
+  {id:'finance',label:'Finance',icon:'<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>'},
+  {id:'meals',label:'Meals',icon:'<path d="M6 2v7a3 3 0 0 0 6 0V2M9 9v13M18 2c-2 2-2 6 0 8v12"/>'},
+  {id:'family',label:'Family',icon:'<circle cx="9" cy="8" r="3"/><path d="M3 21v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1"/><circle cx="17" cy="8" r="2.5"/><path d="M21 21v-1a4 4 0 0 0-3-3.8"/>'},
+];
+function renderTabs(){
+  document.getElementById('tabbar').innerHTML=tabs.map(t=>`<button class="${nav===t.id?'on':''}" onclick="go('${t.id}')"><svg viewBox="0 0 24 24">${t.icon}</svg>${t.label}</button>`).join('');
+}
+function go(id){nav=id;choreMember=null;render()}
+
+/* ---------------- render router ---------------- */
+function render(){
+  renderTabs();
+  const s=document.getElementById('screen');
+  if(nav==='cal')s.innerHTML=calScreen();
+  else if(nav==='chores')s.innerHTML=choreMember?memberChores():choreHome();
+  else if(nav==='finance')s.innerHTML=financeScreen();
+  else if(nav==='meals')s.innerHTML=mealsScreen();
+  else if(nav==='family')s.innerHTML=familyScreen();
+}
+
+/* ---------------- CALENDAR ---------------- */
+function calScreen(){
+  const dayMeals=meals.filter(m=>m.day==='Sun');
+  let blocks='',top0=11;
+  const hours=[11,12,13,14,15,16,17,18];
+  const grid=hours.map(h=>`<div class="hr"><span class="l">${h%12||12} ${h<12?'am':'pm'}</span></div>`).join('');
+  events.forEach(e=>{
+    const m=M(e.who),t=(e.s-top0)*52,h=(e.e-e.s)*52-4;
+    const fmt=x=>{const hh=Math.floor(x),mm=Math.round((x-hh)*60);return (hh%12||12)+(mm?':'+String(mm).padStart(2,'0'):'')+(hh<12?'am':'pm')};
+    blocks+=`<div class="blk lift" style="top:${t+2}px;height:${h}px;background:${m.color}" onclick="editEvent(${e.id})"><b>${e.title}</b><i>${fmt(e.s)}–${fmt(e.e)}${e.rep!=='Once'?' ↻':''}</i></div>`;
+  });
+  const nowTop=(13.2-top0)*52;
+  return `<div class="hd"><div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div><h1>Sunday, Jun 14</h1><span class="sub">today</span></div>
+      <div class="mut" style="font-size:20px">‹ ›</div></div></div>
+    <div class="seg">${['day','week','month'].map(v=>`<button class="${calView===v?'on':''}" onclick="calView='${v}';render()">${v[0].toUpperCase()+v.slice(1)}</button>`).join('')}</div>
+    ${calView!=='day'?`<div class="card" style="text-align:center;color:var(--muted);padding:30px">${calView==='week'?'Week grid — seven day columns, same colored blocks':'Month grid — per-person colored dots, tap a day for its sheet'}</div>`:`
+    <div class="card" style="margin-top:0">
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">${members.map(m=>`<span class="pill"><span class="av xs" style="background:${m.color}">${m.ini}</span>${m.name}</span>`).join('')}</div>
+      <div style="background:var(--sunken);border-radius:10px;padding:8px 10px;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="mut" style="text-transform:uppercase;font-size:10px;letter-spacing:.04em">All day · meals</span>
+        ${dayMeals.map(m=>`<span class="tag" style="background:var(--meal)">🍴 ${m.type} — ${m.title}</span>`).join('')||'<span class="mut">none</span>'}
+      </div>
+      <div class="grid-h" style="position:relative">${grid}
+        <div style="position:absolute;inset:0">${blocks}
+          <div style="position:absolute;left:50px;right:0;top:${nowTop}px;height:2px;background:var(--accent)"><span style="position:absolute;left:-4px;top:-4px;width:9px;height:9px;border-radius:50%;background:var(--accent)"></span></div>
+        </div>
+      </div>
+      <p class="mut" style="margin-top:10px">Tap an empty slot or the ＋ button to add. Repeating events show ↻.</p>
+    </div>`}
+    <button class="fab" onclick="editEvent(null)">＋</button>`;
+}
+function editEvent(id){
+  const e=id?events.find(x=>x.id===id):{id:++cseq,title:'',who:'m1',s:9,e:10,rep:'Once',_new:true};
+  window._e=e;
+  showSheet(`<h3>${e._new?'New event':'Edit event'}</h3>
+    <div class="field"><label>Title</label><input id="e-t" value="${e.title}" placeholder="What's happening?"></div>
+    <div class="field"><label>Who's this for?</label><div class="chips" id="e-who">${members.map(m=>`<div class="c ${m.id===e.who?'sel':''}" data-id="${m.id}" onclick="pickOne(this,'e-who')">${av(m,'xs')} ${m.name}</div>`).join('')}</div></div>
+    <div style="display:flex;gap:10px"><div class="field" style="flex:1"><label>Start</label><input id="e-s" type="time" value="${hhmm(e.s)}"></div><div class="field" style="flex:1"><label>End</label><input id="e-e" type="time" value="${hhmm(e.e)}"></div></div>
+    <div class="field"><label>Repeat</label><select id="e-rep">${['Once','Daily','Weekly','Every weekday','Monthly'].map(o=>`<option ${o===e.rep?'selected':''}>${o}</option>`).join('')}</select></div>
+    <div style="display:flex;gap:10px">${e._new?'':'<button class="btn ghost" style="flex:none;color:var(--neg)" onclick="delEvent('+e.id+')">Delete</button>'}<button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveEvent()">Save</button></div>`);
+}
+function saveEvent(){
+  const e=window._e;e.title=val('e-t')||'Untitled';e.who=document.querySelector('#e-who .sel').dataset.id;
+  e.s=mmhh(val('e-s'));e.e=mmhh(val('e-e'));e.rep=val('e-rep');
+  if(e._new){delete e._new;events.push(e)}
+  closeSheet();render();
+}
+function delEvent(id){events=events.filter(e=>e.id!==id);closeSheet();render()}
+
+/* ---------------- CHORES ---------------- */
+function choreHome(){
+  return `<div class="hd"><h1>Chores</h1><span class="sub">Tap a member to open their list</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:0 18px">
+    ${members.map(m=>{const list=chores[m.id]||[],done=list.filter(c=>c.done).length;
+      return `<div class="card lift" style="margin:0;text-align:center" onclick="openMember('${m.id}')">
+        ${av(m,'l ring')}
+        <div style="font-weight:700;margin-top:8px">${m.name}</div>
+        <div style="color:var(--star);font-weight:800;font-size:15px" class="tnum">★ ${m.stars}</div>
+        <div class="mut">${list.length?done+'/'+list.length+' done today':'no chores'}</div>
+      </div>`}).join('')}
+    </div>`;
+}
+function openMember(id){choreMember=id;render()}
+function memberChores(){
+  const m=M(choreMember),list=chores[choreMember]||[],rl=rewards[choreMember]||[];
+  return `<div class="hd"><div style="display:flex;align-items:center;gap:10px">
+      <span class="mut lift" style="font-size:22px" onclick="choreMember=null;render()">‹</span>
+      ${av(m,'s ring')}<div><h1 style="font-size:20px">${m.name}'s chores</h1><span class="sub">Clear all to celebrate · ★ ${m.stars}</span></div></div></div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong>Today</strong><button class="pill on" onclick="addChore()">＋ Add chore</button></div>
+      ${list.length?list.map(c=>`<div class="row">
+        <div class="ck ${c.done?'on':''}" onclick="toggleChore('${choreMember}',${c.id})">${c.done?'✓':''}</div>
+        <div style="flex:1"><div style="font-weight:600;${c.done?'text-decoration:line-through;color:var(--muted)':''}">${c.t}</div><div class="mut">${c.due}${c.rep!=='Once'?' · ↻ '+c.rep:''}</div></div>
+        <span style="color:var(--star);font-weight:800" class="tnum">★ ${c.stars}</span></div>`).join(''):'<p class="mut" style="padding:10px 0">No chores yet — add one.</p>'}
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><strong>🎁 Rewards bank</strong><span style="color:var(--star);font-weight:800" class="tnum">★ ${m.stars} saved</span></div>
+      ${rl.map(r=>{const ok=m.stars>=r.cost,pct=Math.min(100,Math.round(m.stars/r.cost*100));
+        return `<div style="background:${ok?'#FFF8E8':'var(--bg)'};border:1.5px solid ${ok?'var(--star)':'var(--border)'};border-radius:12px;padding:11px;margin-bottom:9px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>${r.t}</strong>
+            ${ok?`<button class="pill on" style="border-color:var(--star);background:#FFF1CF;color:#9a6b00" onclick="redeem('${choreMember}','${r.id}')">Redeem · −${r.cost}★</button>`:`<span class="mut tnum">${r.cost}★</span>`}
+          </div>
+          <div class="bar"><i style="width:${pct}%"></i></div>
+          <div class="mut" style="margin-top:5px">${ok?'Ready to redeem 🎉':(r.cost-m.stars)+' stars to go'}</div>
+        </div>`}).join('')}
+      <button class="btn ghost" onclick="addReward()">＋ Create reward</button>
+      ${rewardLog[choreMember].length?`<div style="margin-top:12px"><div class="mut" style="text-transform:uppercase;font-size:10px;letter-spacing:.04em;margin-bottom:5px">History</div>${rewardLog[choreMember].map(h=>`<div class="mut" style="padding:3px 0">Redeemed ${h.t} · −${h.cost}★</div>`).join('')}</div>`:''}
+    </div>`;
+}
+function toggleChore(mid,cid){
+  const c=chores[mid].find(x=>x.id===cid),m=M(mid);
+  if(!c.done){c.done=true;m.stars+=c.stars;burst(8)}
+  else{c.done=false;m.stars-=c.stars}
+  if(chores[mid].length&&chores[mid].every(x=>x.done))burst(30);
+  render();
+}
+function redeem(mid,rid){
+  const r=rewards[mid].find(x=>x.id===rid),m=M(mid);
+  if(m.stars>=r.cost){m.stars-=r.cost;rewardLog[mid].unshift({t:r.t,cost:r.cost});burst(24)}
+  render();
+}
+function addChore(){
+  const mid=choreMember;window._stars=3;window._csel=[mid];
+  showSheet(`<h3>Add chore</h3>
+    <div class="field"><label>Title</label><input id="c-t" placeholder="e.g. Homework"></div>
+    <div class="field"><label>Assign to</label><div class="chips" id="c-who">${members.map(m=>`<div class="c ${m.id===mid?'sel':''}" data-id="${m.id}" onclick="this.classList.toggle('sel')">${av(m,'xs')} ${m.name}</div>`).join('')}</div></div>
+    <div class="field"><label>Stars</label><div class="stepper"><button onclick="bumpStars(-1)">–</button><strong id="c-stars" class="tnum" style="font-size:20px;color:var(--star)">★ 3</strong><button onclick="bumpStars(1)">+</button></div></div>
+    <div style="display:flex;gap:10px"><div class="field" style="flex:1"><label>When due</label><select id="c-due"><option>Today</option><option>Tomorrow</option><option>Mon</option><option>Sat</option></select></div>
+    <div class="field" style="flex:1"><label>Repeat</label><select id="c-rep"><option>Once</option><option selected>Daily</option><option>Weekly</option><option>Weekdays</option></select></div></div>
+    <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveChore()">Add chore</button></div>`);
+}
+function bumpStars(d){window._stars=Math.max(1,window._stars+d);document.getElementById('c-stars').textContent='★ '+window._stars}
+function saveChore(){
+  const who=[...document.querySelectorAll('#c-who .sel')].map(c=>c.dataset.id);
+  const obj={id:++cseq,t:val('c-t')||'New chore',stars:window._stars,due:val('c-due'),rep:val('c-rep'),done:false};
+  (who.length?who:[choreMember]).forEach(mid=>chores[mid].push({...obj,id:++cseq}));
+  closeSheet();render();
+}
+function addReward(){
+  window._rcost=20;
+  showSheet(`<h3>Create reward</h3>
+    <div class="field"><label>Reward name</label><input id="r-t" placeholder="e.g. Ice-cream trip"></div>
+    <div class="field"><label>Star cost</label><div class="stepper"><button onclick="bumpCost(-5)">–</button><strong id="r-cost" class="tnum" style="font-size:20px;color:var(--star)">★ 20</strong><button onclick="bumpCost(5)">+</button></div></div>
+    <p class="mut" style="margin-bottom:12px">It becomes redeemable once ${M(choreMember).name}'s balance reaches the cost. Redeeming subtracts the stars.</p>
+    <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveReward()">Create</button></div>`);
+}
+function bumpCost(d){window._rcost=Math.max(5,window._rcost+d);document.getElementById('r-cost').textContent='★ '+window._rcost}
+function saveReward(){rewards[choreMember].push({id:'r'+(++rseq),t:val('r-t')||'New reward',cost:window._rcost});closeSheet();render()}
+
+/* ---------------- FINANCE ---------------- */
+let finView='home';
+function financeScreen(){
+  if(finView==='review')return financeReview();
+  const spent=expenses.filter(e=>!e.pos).reduce((a,b)=>a+b.amt,0)+1600;
+  return `<div class="hd"><h1>Finance</h1><span class="sub">June 2026 · USD</span></div>
+    <div class="seg">${['home','review'].map(v=>`<button class="${finView===v?'on':''}" onclick="finView='${v}';render()">${v==='home'?'Overview':'Monthly review'}</button>`).join('')}</div>
+    <div class="card" style="background:linear-gradient(135deg,#FFF3EA,#FBF7F0)">
+      <div class="mut">Spent in June</div>
+      <div style="font-size:34px;font-weight:800" class="tnum">$2,418<span style="font-size:15px;color:var(--pos);font-weight:700;margin-left:8px">vs May −$120</span></div>
+      <div style="display:flex;gap:14px;margin-top:14px">${members.map(m=>`<div style="text-align:center">${av(m,'m ring')}<div class="tnum" style="font-size:12px;margin-top:3px">$${[420,690,0,0][members.indexOf(m)]||320}</div></div>`).join('')}</div>
+    </div>
+    <div class="card">
+      <strong>Upcoming · next 14 days</strong>
+      ${expenses.filter(e=>e.rec).map(e=>`<div class="row"><span style="font-size:20px">${e.cat}</span><div style="flex:1"><div style="font-weight:600">${e.t}</div><div class="mut">due soon · ${M(e.who).name}</div></div><span class="tnum" style="font-weight:700">$${e.amt}</span></div>`).join('')}
+    </div>
+    <div class="card">
+      <strong>Recent</strong>
+      ${expenses.map(e=>`<div class="row"><span class="av s" style="background:${M(e.who).color}">${M(e.who).ini}</span><div style="flex:1"><div style="font-weight:600">${e.cat} ${e.t}</div><div class="mut">${e.when}${e.rec?' · ↻ recurring':''}</div></div><span class="tnum" style="font-weight:700;color:${e.pos?'var(--pos)':'var(--neg)'}">${e.pos?'+':'−'}$${e.amt}</span></div>`).join('')}
+    </div>
+    <button class="fab" onclick="addExpense()">＋</button>`;
+}
+function financeReview(){
+  const cats=[['🏠 Rent',1600,'#7C83DB'],['🛒 Groceries',420,'#3FA796'],['🎉 Fun',210,'#E8595B'],['📺 Subscriptions',98,'#3D8BCD'],['🚗 Transport',90,'#F5B73D']];
+  const tot=cats.reduce((a,b)=>a+b[1],0);
+  return `<div class="hd"><h1>June review</h1><span class="sub">$2,418 spent · vs May −$120</span></div>
+    <div class="seg">${['home','review'].map(v=>`<button class="${finView===v?'on':''}" onclick="finView='${v}';render()">${v==='home'?'Overview':'Monthly review'}</button>`).join('')}</div>
+    <div class="card"><strong>By category</strong>
+      ${cats.map(c=>`<div style="margin-top:11px"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600"><span>${c[0]}</span><span class="tnum">$${c[1]} · ${Math.round(c[1]/tot*100)}%</span></div><div class="bar" style="background:var(--sunken)"><i style="width:${c[1]/tot*100}%;background:${c[2]}"></i></div></div>`).join('')}
+    </div>
+    <div class="card"><strong>By person</strong>
+      ${members.map((m,i)=>{const v=[420,690,180,90][i];return `<div style="display:flex;align-items:center;gap:10px;margin-top:10px">${av(m,'s')}<div style="flex:1"><div class="bar"><i style="width:${v/700*100}%;background:${m.color}"></i></div></div><span class="tnum" style="font-weight:700">$${v}</span></div>`}).join('')}
+    </div>
+    <div class="card"><strong>Fixed vs variable</strong>
+      <div style="display:flex;height:34px;border-radius:9px;overflow:hidden;margin-top:10px">
+        <div style="width:67%;background:var(--meal);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:600">Fixed $1,713</div>
+        <div style="flex:1;background:var(--star);color:#5a3d00;display:grid;place-items:center;font-size:12px;font-weight:600">Variable $705</div>
+      </div>
+    </div>`;
+}
+function addExpense(){
+  window._etype='one';window._ewho='m1';
+  showSheet(`<h3>Add expense</h3>
+    <div class="seg" style="margin:0 0 14px"><button class="on" id="t-one" onclick="setEType('one')">One-off</button><button id="t-rec" onclick="setEType('rec')">Recurring</button></div>
+    <div class="field"><label>Amount (USD)</label><input id="x-amt" type="number" placeholder="$0.00" inputmode="decimal"></div>
+    <div class="field"><label>Category</label><div class="chips" id="x-cats">${expenseCats.map((c,i)=>`<div class="c ${i===0?'sel':''}" data-c="${c}" onclick="selOne(this)">${c}</div>`).join('')}<div class="c" onclick="showNewInput('x-newcat',this)">＋ New</div></div><input id="x-newcat" placeholder="New category (e.g. 🐶 Pets)" style="display:none;width:100%;border:1.5px solid var(--border);border-radius:10px;padding:11px;font:inherit;background:var(--bg);margin-top:8px"></div>
+    <div class="field"><label>Who paid</label><div class="chips" id="x-who">${members.map(m=>`<div class="c ${m.id==='m1'?'sel':''}" data-id="${m.id}" onclick="pickOne(this,'x-who')">${av(m,'xs')} ${m.name}</div>`).join('')}</div></div>
+    <div id="recfields" style="display:none"><div style="display:flex;gap:10px"><div class="field" style="flex:1"><label>Cadence</label><select><option>Monthly</option><option>Weekly</option><option>Yearly</option></select></div><div class="field" style="flex:1"><label>Due day</label><select>${[1,5,10,15,28].map(d=>`<option>${d}</option>`).join('')}</select></div></div></div>
+    <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveExpense()">Add</button></div>`);
+}
+function setEType(t){window._etype=t;document.getElementById('t-one').classList.toggle('on',t==='one');document.getElementById('t-rec').classList.toggle('on',t==='rec');document.getElementById('recfields').style.display=t==='rec'?'block':'none'}
+function saveExpense(){
+  const amt=parseFloat(val('x-amt'))||0,who=document.querySelector('#x-who .sel').dataset.id;
+  const nc=val('x-newcat').trim();let cat;
+  if(nc){cat=nc;if(!expenseCats.includes(cat))expenseCats.push(cat)}
+  else{const c=document.querySelector('#x-cats .c.sel');cat=(c&&c.dataset.c)?c.dataset.c:'💵 Other'}
+  const parts=cat.split(' '),emoji=parts[0],name=parts.slice(1).join(' ')||'Expense';
+  expenses.unshift({who,t:window._etype==='rec'?name+' (bill)':name,cat:emoji,amt:Math.round(amt*100)/100,pos:false,when:'just now',rec:window._etype==='rec'});
+  closeSheet();render();
+}
+
+/* ---------------- MEALS / GROCERY ---------------- */
+let mealView='have';
+function mealsScreen(){
+  let body='';
+  if(mealView==='have'){
+    const cats=[...new Set(haveList.map(h=>h.cat))];
+    body=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong>In the house</strong><button class="pill on" onclick="addHave()">＋ Add</button></div>
+      <p class="mut" style="margin-bottom:8px">Glance before shopping. Tap → buy when running low.</p>
+      ${cats.map(cat=>`<div class="mut" style="text-transform:uppercase;font-size:10px;letter-spacing:.04em;margin:10px 0 2px">${cat}</div>${haveList.filter(h=>h.cat===cat).map((h,i)=>`<div class="row"><span style="flex:1;font-weight:600">${h.t}</span><button class="pill" onclick="haveToBuy('${h.t}')">→ buy</button></div>`).join('')}`).join('')}</div>`;
+  } else if(mealView==='buy'){
+    const list=buyFilter==='All'?buyList:buyList.filter(b=>b.store===buyFilter);
+    const active=list.filter(b=>!b.got),got=list.filter(b=>b.got);
+    body=`<div style="padding:0 18px 12px;display:flex;gap:7px;overflow-x:auto">${stores.map(s=>`<button class="pill ${buyFilter===s?'on':''}" onclick="buyFilter='${s}';render()">${s}</button>`).join('')}</div>
+      <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong>Need to buy</strong><button class="pill on" onclick="addBuy()">＋ Add</button></div>
+      ${buyFilter!=='All'?`<p class="mut" style="margin-bottom:8px">Filtered to ${buyFilter} — new items auto-tag ${buyFilter}.</p>`:''}
+      ${active.map(b=>`<div class="row"><div class="ck" onclick="toggleBuy('${b.t}')"></div><span style="flex:1;font-weight:600">${b.t}</span><span class="tag" style="background:${storeColor(b.store)}">${b.store}</span></div>`).join('')||'<p class="mut">Nothing here.</p>'}
+      ${got.length?`<div class="mut" style="margin-top:12px">Got it (${got.length})</div>${got.map(b=>`<div class="row" style="opacity:.5"><div class="ck on" onclick="toggleBuy('${b.t}')">✓</div><span style="flex:1;text-decoration:line-through">${b.t}</span><span class="tag" style="background:${storeColor(b.store)}">${b.store}</span></div>`).join('')}`:''}
+      </div>`;
+  } else {
+    const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    body=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong>This week's meals</strong><button class="pill on" onclick="addMeal()">＋ Add meal</button></div>
+      <p class="mut" style="margin-bottom:8px">Meals appear on the main calendar for that day.</p>
+      ${days.map(d=>{const dm=meals.filter(m=>m.day===d);
+        return `<div style="border-bottom:1px solid var(--border);padding:9px 0"><div style="font-weight:700;font-size:13px">${d}${d==='Sun'?' · today':''}</div>
+        ${dm.length?dm.map(m=>`<div style="display:flex;gap:8px;align-items:center;margin-top:5px"><span class="tag" style="background:var(--meal)">🍴 ${m.type}</span><span style="font-weight:600">${m.title}</span><button class="pill" style="margin-left:auto" onclick="mealToBuy('${m.title}')">+ ingredients</button></div>`).join(''):'<span class="mut">— no meal planned</span>'}</div>`}).join('')}</div>`;
+  }
+  return `<div class="hd"><h1>Meals & groceries</h1></div>
+    <div class="seg">${[['have','In the house'],['buy','Need to buy'],['plan','Meals']].map(v=>`<button class="${mealView===v[0]?'on':''}" onclick="mealView='${v[0]}';render()">${v[1]}</button>`).join('')}</div>
+    ${body}`;
+}
+function storeColor(s){return storeColors[s]||'#8A8178'}
+function selOne(el){[...el.parentNode.querySelectorAll('.c')].forEach(c=>c.classList.remove('sel'));el.classList.add('sel')}
+function showNewInput(id,chip){const i=document.getElementById(id);i.style.display='block';i.focus();selOne(chip)}
+function haveToBuy(t){buyList.push({t,store:'Supermarket',got:false});mealView='buy';render()}
+function toggleBuy(t){const b=buyList.find(x=>x.t===t);b.got=!b.got;render()}
+function addHave(){showSheet(`<h3>Add to "in the house"</h3>
+  <div class="field"><label>Item</label><input id="h-t" placeholder="e.g. Milk"></div>
+  <div class="field"><label>Where</label><select id="h-c"><option>Fridge</option><option>Pantry</option><option>Freezer</option></select></div>
+  <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveHave()">Add</button></div>`)}
+function saveHave(){haveList.push({t:val('h-t')||'Item',cat:val('h-c')});closeSheet();render()}
+function addBuy(){const pre=buyFilter!=='All'?buyFilter:stores[1];showSheet(`<h3>Add to buy list</h3>
+  <div class="field"><label>Item</label><input id="b-t" placeholder="e.g. Cheese"></div>
+  <div class="field"><label>Store</label><div class="chips" id="b-stores">${stores.slice(1).map(s=>`<div class="c ${s===pre?'sel':''}" data-s="${s}" onclick="selOne(this)">${s}</div>`).join('')}<div class="c" onclick="showNewInput('b-newstore',this)">＋ New store</div></div>
+  <input id="b-newstore" placeholder="New store name (e.g. Trader Joe's)" style="display:none;width:100%;border:1.5px solid var(--border);border-radius:10px;padding:11px;font:inherit;background:var(--bg);margin-top:8px"></div>
+  <p class="mut" style="margin-bottom:12px">Add a new store once — it joins your store list and filter pills.</p>
+  <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveBuy()">Add</button></div>`)}
+function saveBuy(){
+  const ns=val('b-newstore').trim();let store;
+  if(ns){store=ns;if(!stores.includes(store)){stores.push(store);assignStoreColor(store)}}
+  else{const c=document.querySelector('#b-stores .c.sel');store=(c&&c.dataset.s)?c.dataset.s:stores[1]}
+  buyList.push({t:val('b-t')||'Item',store,got:false});closeSheet();render();
+}
+function addMeal(){showSheet(`<h3>Add meal</h3>
+  <div class="field"><label>Meal</label><input id="m-t" placeholder="e.g. Pasta night"></div>
+  <div style="display:flex;gap:10px"><div class="field" style="flex:1"><label>Type</label><select id="m-ty"><option>Dinner</option><option>Lunch</option></select></div>
+  <div class="field" style="flex:1"><label>Day → calendar</label><select id="m-d"><option>Mon</option><option>Tue</option><option>Wed</option><option>Thu</option><option>Fri</option><option>Sat</option><option selected>Sun</option></select></div></div>
+  <p class="mut" style="margin-bottom:12px">Saving adds it to that day on the main family calendar.</p>
+  <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveMeal()">Add to plan</button></div>`)}
+function saveMeal(){meals.push({id:'me'+Date.now(),title:val('m-t')||'Meal',type:val('m-ty'),day:val('m-d')});closeSheet();render()}
+function mealToBuy(title){buyList.push({t:title+' ingredients',store:'Supermarket',got:false});mealView='buy';render()}
+
+/* ---------------- FAMILY ---------------- */
+function familyScreen(){
+  return `<div class="hd"><h1>Family</h1><span class="sub">Edit names, colors, avatars</span></div>
+    ${members.map(m=>`<div class="card" style="display:flex;align-items:center;gap:14px">${av(m,'l ring')}<div style="flex:1"><div style="font-weight:700;font-size:17px">${m.name}</div><div class="mut">${m.role} · ★ ${m.stars} · <span style="color:${m.color}">●</span> color</div></div><button class="pill" onclick="editMember('${m.id}')">Edit</button></div>`).join('')}
+    <div style="padding:0 18px"><button class="btn ghost">＋ Add member</button></div>`;
+}
+const palette=['#E8595B','#3D8BCD','#3FA796','#C77DD8','#E8A23D','#7C83DB','#5BA85B','#E07AA0'];
+function editMember(id){
+  const m=M(id);window._mc=m.color;
+  showSheet(`<h3>Edit member</h3>
+    <div style="display:flex;justify-content:center;margin-bottom:14px" id="m-prev">${av(m,'l ring')}</div>
+    <div class="field"><label>Name</label><input id="m-n" value="${m.name}"></div>
+    <div class="field"><label>Color</label><div class="chips" id="m-cols">${palette.map(c=>`<span style="width:32px;height:32px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===m.color?'0 0 0 2px var(--text)':'none'}" onclick="pickColor('${id}','${c}',this)"></span>`).join('')}</div></div>
+    <div class="field"><label>Avatar</label><div class="chips"><span class="c sel">📷 Photo</span><span class="c">🙂 Emoji</span><span class="c">${m.ini} Initials</span></div></div>
+    <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn primary" onclick="saveMember('${id}')">Save</button></div>`);
+}
+function pickColor(id,c,el){window._mc=c;[...el.parentNode.children].forEach(x=>x.style.boxShadow='none');el.style.boxShadow='0 0 0 2px var(--text)';
+  document.getElementById('m-prev').innerHTML=`<span class="av l ring" style="background:${c}">${M(id).ini}</span>`}
+function saveMember(id){const m=M(id);m.name=val('m-n')||m.name;m.color=window._mc;closeSheet();render()}
+
+/* ---------------- helpers ---------------- */
+function val(id){return document.getElementById(id).value}
+function hhmm(t){return String(Math.floor(t)).padStart(2,'0')+':'+String(Math.round((t-Math.floor(t))*60)).padStart(2,'0')}
+function mmhh(v){const[h,m]=v.split(':').map(Number);return h+m/60}
+function pickOne(el,grp){document.querySelectorAll('#'+grp+' .c, .chips .c').forEach(c=>{if(c.parentNode===el.parentNode)c.classList.remove('sel')});el.classList.add('sel')}
+function showSheet(html){document.getElementById('sheet').innerHTML=html;document.getElementById('ov').classList.add('show')}
+function closeSheet(){document.getElementById('ov').classList.remove('show')}
+document.getElementById('ov').onclick=e=>{if(e.target.id==='ov')closeSheet()};
+function burst(n){const es=['🎉','⭐','🎊','🌟','✨','🥳'];for(let i=0;i<n;i++){const d=document.createElement('div');d.className='conf';d.textContent=es[i%es.length];d.style.left=Math.random()*360+'px';d.style.top='-30px';d.style.animationDelay=Math.random()*.5+'s';document.querySelector('.phone').appendChild(d);setTimeout(()=>d.remove(),2200)}}
+
+render();
+</script>
+</body>
+</html>

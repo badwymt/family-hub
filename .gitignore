@@ -13,3 +13,4 @@ Thumbs.db
 # sandbox scratch (not part of the app)
 *.mjs
 node_modules/
+_to_delete/

@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Family Hub — wall UI v2 (1280×720)</title>
+<style>
+:root{
+  --bg:#FBF7F0; --panel:#FFFFFF; --panel2:#F4EDE2; --text:#2E2A26; --muted:#8A8178;
+  --line:#EBE2D4; --accent:#FF7A45; --star:#E0892B; --rail:#F6EFE4;
+  --shadow:0 2px 10px rgba(80,55,25,.06);
+  --teal:#2E9C8E;   --teal-t:#DCF1EE;
+  --red:#D4646B;    --red-t:#FBE4E5;
+  --blue:#4A86C8;   --blue-t:#E1EDF9;
+  --green:#4FA35F;  --green-t:#E3F2E5;
+  --amber:#D9932F;  --amber-t:#FBEEDA;
+  --purple:#8C6BC8; --purple-t:#EBE4F8;
+  --pink:#CF6FA4;   --pink-t:#F9E3EE;
+  --slate:#7A8794;  --slate-t:#E9EDF1;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#DED5C6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:22px 12px 40px}
+.caption{font-size:13px;color:#6b6257;max-width:1280px;width:100%;line-height:1.55}
+.caption b{color:#2E2A26}
+
+.device{width:1280px;height:720px;max-height:720px;flex:none;background:var(--bg);border-radius:14px;overflow:hidden;
+  box-shadow:0 18px 50px rgba(60,45,25,.28), 0 0 0 10px #fff, 0 0 0 12px #cfc4b2;
+  display:grid;grid-template-columns:104px 1fr;position:relative}
+
+/* ---------- rail ---------- */
+.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:10px 8px;gap:3px}
+.brandmark{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0 12px;margin-bottom:5px;border-bottom:1px solid var(--line)}
+.brandmark .bm{width:34px;height:34px;border-radius:11px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:800;font-size:16px}
+.brandmark span{font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.4px}
+.navitem{border:0;background:none;cursor:pointer;padding:11px 4px 9px;border-radius:14px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--muted);font-weight:600;font-size:11px}
+.navitem .ico{font-size:22px;line-height:1}
+.navitem:hover{background:#EFE6D7}
+.navitem.on{background:#fff;color:var(--accent);box-shadow:var(--shadow)}
+.railspacer{flex:1}
+
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
+
+/* ---------- info bar ---------- */
+.infobar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--line)}
+.famname{font-size:19px;font-weight:800;letter-spacing:-.2px}
+.clock{font-size:17px;font-weight:600;color:#4a443d}
+.cdchip{display:flex;align-items:center;gap:7px;background:var(--purple-t);border:1px solid #DCD2F0;color:#4C3B77;
+  border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:700;cursor:pointer}
+.cdchip b{font-variant-numeric:tabular-nums}
+.ibspacer{flex:1}
+.segs{display:flex;background:var(--panel2);border-radius:11px;padding:3px;gap:2px}
+.seg{border:0;background:none;cursor:pointer;font:inherit;font-size:13px;font-weight:600;color:var(--muted);padding:7px 14px;border-radius:9px}
+.seg.on{background:#fff;color:var(--text);box-shadow:var(--shadow)}
+.ibtn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 13px;font:inherit;font-size:13px;
+  font-weight:600;color:#4a443d;cursor:pointer}
+.ibtn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- people strip ---------- */
+.people{height:52px;flex:0 0 52px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line);background:#FDFAF5}
+.person{display:flex;align-items:center;gap:8px;padding:5px 12px 5px 5px;border-radius:999px;border:1px solid var(--line);
+  background:#fff;cursor:pointer;min-width:176px}
+.person.off{opacity:.38}
+.av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:15px;color:#fff;flex:0 0 28px}
+.pmeta{flex:1;min-width:0}
+.pname{font-size:12.5px;font-weight:700;line-height:1.1}
+.pbar{height:5px;border-radius:3px;background:#EDE5D8;margin-top:4px;overflow:hidden}
+.pbar i{display:block;height:100%;border-radius:3px}
+.pfrac{font-size:11px;color:var(--muted);font-weight:700;font-variant-numeric:tabular-nums}
+
+.pane{flex:1;min-height:0;overflow:hidden;position:relative}
+.pane[hidden]{display:none}
+
+/* ================= SCHEDULE (default) ================= */
+.sched{display:grid;grid-template-columns:repeat(5,1fr);height:100%}
+.scol{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.scol:first-child{border-left:0;background:#FFFDF9;box-shadow:inset 0 3px 0 var(--accent)}
+.shd{padding:9px 11px 7px;border-bottom:1px solid var(--line)}
+.shd .wd{font-size:10.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.7px}
+.shd .dn{font-size:19px;font-weight:800;line-height:1.15;display:flex;align-items:center;gap:7px}
+.shd .badge{font-size:10px;font-weight:800;color:#fff;background:var(--accent);border-radius:999px;padding:2px 8px;letter-spacing:.4px}
+.sbody{flex:1;overflow:auto;padding:8px 9px}
+.sev{border-radius:10px;padding:7px 9px;margin-bottom:6px;border-left:3px solid;position:relative}
+.sev .ti{font-weight:700;font-size:12px;line-height:1.25}
+.sev .tm{font-size:10.5px;opacity:.72;font-weight:600;margin-top:1px}
+.sev .who{position:absolute;right:6px;top:7px;width:16px;height:16px;border-radius:50%;font-size:9px;color:#fff;
+  display:grid;place-items:center;font-weight:800}
+.sad{border-radius:8px;padding:4px 8px;margin-bottom:6px;font-size:11px;font-weight:700}
+.sfoot{border-top:1px solid var(--line);padding:8px 11px;background:#FDFAF5;font-size:11.5px;display:flex;flex-direction:column;gap:5px}
+.sfoot .r{display:flex;align-items:center;gap:6px;color:#4a443d}
+.sfoot .r b{font-weight:700}
+.sfoot .chores{color:var(--muted);font-weight:700;font-size:11px}
+.empt{color:#BCB2A4;font-size:11.5px;font-style:italic;padding:6px 2px}
+
+/* ================= WEEK ================= */
+.wk{display:flex;flex-direction:column;height:100%;min-height:0}
+.wkhead{display:grid;grid-template-columns:52px repeat(7,1fr);border-bottom:1px solid var(--line);background:#FDFAF5}
+.dh{padding:6px 4px;text-align:center;border-left:1px solid var(--line)}
+.dh .wd{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.dh .dn{font-size:17px;font-weight:700;line-height:1.15}
+.dh.wknd{background:#F7F1E6}
+.dh.today .dn{background:var(--accent);color:#fff;border-radius:50%;width:26px;height:26px;display:inline-grid;place-items:center;font-size:15px}
+.allday{display:grid;grid-template-columns:52px repeat(7,1fr);border-bottom:1px solid var(--line);min-height:26px;background:#FDFAF5}
+.allday .lbl{font-size:9.5px;color:var(--muted);align-self:center;text-align:right;padding-right:6px;font-weight:700}
+.adcell{border-left:1px solid var(--line);padding:3px}
+.adchip{font-size:10.5px;font-weight:700;border-radius:6px;padding:2px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wkbody{flex:1;overflow-y:auto;position:relative}
+.grid{display:grid;grid-template-columns:52px repeat(7,1fr);position:relative;padding-top:9px}
+.gutter{position:relative}
+.hr{height:56px;border-top:1px solid var(--line);position:relative}
+.hr .t{position:absolute;top:-8px;right:6px;font-size:10.5px;color:var(--muted);font-weight:600}
+.col{position:relative;border-left:1px solid var(--line)}
+.col.wknd{background:#FAF5EC}
+.col .hr{border-top:1px solid #F2EADC}
+.ev{position:absolute;left:3px;right:3px;border-radius:8px;padding:4px 6px;overflow:hidden;cursor:pointer;
+  border-left:3px solid;font-size:11px;line-height:1.25}
+.ev .ti{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev .tm{font-size:10px;opacity:.78}
+.ev .who{position:absolute;right:4px;bottom:3px;width:15px;height:15px;border-radius:50%;font-size:9px;color:#fff;display:grid;place-items:center;font-weight:800}
+.ev.task{background:#fff;border:1px dashed var(--line);border-left:3px solid}
+.nowline{position:absolute;left:52px;right:0;height:0;border-top:2px solid var(--accent);z-index:5}
+.nowline::before{content:"";position:absolute;left:-5px;top:-5px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+
+/* ================= MONTH ================= */
+.mo{display:grid;grid-template-rows:auto 1fr;height:100%}
+.mohd{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--line);background:#FDFAF5}
+.mohd div{text-align:center;font-size:10.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;padding:6px 0}
+.mogrid{display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:1fr;min-height:0}
+.mc{border-left:1px solid var(--line);border-top:1px solid var(--line);padding:3px 4px;overflow:hidden;font-size:10.5px}
+.mc .d{font-weight:800;font-size:11.5px;color:#4a443d;margin-bottom:2px}
+.mc.wknd{background:#FAF5EC}
+.mc.today .d{background:var(--accent);color:#fff;border-radius:50%;width:19px;height:19px;display:grid;place-items:center;font-size:10.5px}
+.mc.dim{opacity:.4}
+.mchip{border-radius:5px;padding:1px 5px;margin-bottom:2px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:2px solid}
+.more{color:var(--muted);font-weight:700;font-size:10px}
+
+/* ================= CHORES (incl. rewards) ================= */
+.chores{display:flex;flex-direction:column;height:100%;min-height:0}
+.rewardbar{flex:0 0 60px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--line);background:#FFFDF9;overflow:auto}
+.rw{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line);border-radius:13px;padding:7px 12px;min-width:236px}
+.rw .stars{font-size:14px;font-weight:800;color:var(--star);font-variant-numeric:tabular-nums}
+.rw .goal{flex:1;min-width:0}
+.rw .gname{font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rw .gbar{height:5px;border-radius:3px;background:#EDE5D8;margin-top:3px;overflow:hidden}
+.rw .gbar i{display:block;height:100%;background:var(--star);border-radius:3px}
+.rw .rbtn{border:0;background:var(--star);color:#fff;font:inherit;font-size:11px;font-weight:800;border-radius:8px;padding:6px 11px;cursor:pointer}
+.rw .rbtn.off{background:#EDE5D8;color:#A89B8A;cursor:default}
+.tasks{display:grid;grid-template-columns:repeat(5,1fr);flex:1;min-height:0}
+.tcol{border-left:1px solid var(--line);padding:10px;overflow:auto}
+.tcol:first-child{border-left:0;background:#FAF5EC}
+.tchead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.tchead .nm{font-weight:800;font-size:13.5px}
+.tchead .st{margin-left:auto;font-size:12px;font-weight:800;color:var(--star)}
+.tgroup{font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:10px 0 5px}
+.titem{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line);border-radius:11px;
+  padding:10px;margin-bottom:6px;font-size:12.5px;cursor:pointer;min-height:44px}
+.tcol:first-child .titem{border-style:dashed}
+.tick{width:24px;height:24px;border-radius:50%;border:2px solid var(--line);flex:0 0 24px;display:grid;place-items:center;font-size:13px;color:#fff}
+.titem.done{opacity:.5}
+.titem.done .tick{background:var(--green);border-color:var(--green)}
+.titem.done .lbl{text-decoration:line-through}
+.titem .em{font-size:16px}
+.titem .lbl{flex:1;font-weight:600}
+.titem .pts{font-size:11px;font-weight:800;color:var(--star)}
+
+/* ================= MEALS ================= */
+.meals{padding:12px 14px 14px;height:100%}
+.mgrid{display:grid;grid-template-columns:74px repeat(7,1fr);gap:6px;height:100%}
+.mrow-lbl{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;display:flex;align-items:center}
+.mcell{background:#fff;border:1px solid var(--line);border-radius:11px;padding:7px;font-size:11.5px;font-weight:600;
+  display:flex;flex-direction:column;gap:4px;cursor:pointer}
+.mcell:hover{border-color:var(--accent)}
+.mcell .add{color:#C9BEAE;font-weight:700;font-size:18px;margin:auto}
+.mdayhd{text-align:center;font-size:11.5px;font-weight:800;padding-bottom:2px}
+
+/* ================= LISTS ================= */
+.lists{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:14px;height:100%}
+.lcard{background:#fff;border:1px solid var(--line);border-radius:18px;padding:13px;box-shadow:var(--shadow);display:flex;flex-direction:column}
+.lcard h4{margin:0 0 4px;font-size:14px;display:flex;align-items:center;gap:7px}
+.lcard h4 .swatch{width:10px;height:10px;border-radius:3px}
+.lcard .addbox{border:1px dashed var(--line);border-radius:10px;padding:9px;font-size:12px;color:#BCB2A4;margin:9px 0}
+.li{display:flex;align-items:center;gap:9px;padding:8px 2px;font-size:12.5px;border-bottom:1px solid #F4EDE2;min-height:40px}
+.li .tick{width:22px;height:22px;flex:0 0 22px;font-size:12px}
+.li.done{color:var(--muted);text-decoration:line-through}
+
+/* ================= COUNTDOWNS ================= */
+.cds{padding:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-content:start;height:100%;overflow:auto}
+.cd{border-radius:16px;padding:14px 16px;border:1px solid var(--line);background:#fff;box-shadow:var(--shadow);
+  display:flex;align-items:center;gap:14px}
+.cd .emo{font-size:32px}
+.cd .n{font-size:14px;font-weight:800}
+.cd .w{font-size:11.5px;color:var(--muted);font-weight:600;margin-top:2px}
+.cd .days{margin-left:auto;text-align:center}
+.cd .days b{display:block;font-size:26px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.cd .days span{font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+
+.ph{height:100%;display:grid;place-items:center;color:var(--muted);text-align:center;font-size:14px;gap:6px}
+.fab{position:absolute;right:20px;bottom:20px;width:62px;height:62px;border-radius:50%;border:0;background:var(--accent);
+  color:#fff;font-size:32px;line-height:1;cursor:pointer;box-shadow:0 6px 18px rgba(255,122,69,.42);z-index:20}
+
+/* ================= AMBIENT ================= */
+.ambient{position:absolute;inset:0;background:linear-gradient(160deg,#2A2622,#3B332B);color:#fff;z-index:60;
+  display:none;flex-direction:column;justify-content:center;padding:0 70px;gap:26px;cursor:pointer}
+.ambient.show{display:flex}
+.ambient .big{font-size:104px;font-weight:200;letter-spacing:-3px;line-height:1}
+.ambient .sub{font-size:20px;opacity:.6;margin-top:-4px}
+.ambient .agenda{display:flex;gap:12px;flex-wrap:wrap}
+.acard{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:12px 16px;min-width:198px}
+.acard .k{font-size:11px;opacity:.55;text-transform:uppercase;letter-spacing:1px;font-weight:800}
+.acard .v{font-size:16px;font-weight:600;margin-top:5px}
+.acard .m{font-size:12.5px;opacity:.6;margin-top:3px}
+.ambient .hint{position:absolute;bottom:26px;left:70px;font-size:12px;opacity:.38}
+</style>
+</head>
+<body>
+
+<div class="caption"><b>Family Hub — wall layout v2, 1280×720 (actual size).</b> Locked decisions applied: <b>Schedule is the default view</b> and starts on today · <b>4-item rail</b> (Money is phone-only, Rewards folded into Chores) · <b>no weather</b> · <b>countdowns in scope</b>. Click the rail, the view pills, the countdown chip, task circles, and 🌙 for ambient.</div>
+
+<div class="device">
+
+  <!-- ===== RAIL ===== -->
+  <nav class="rail">
+    <div class="brandmark"><div class="bm">B</div><span>BADAWY</span></div>
+    <button class="navitem on" data-p="cal"><span class="ico">🗓️</span>Calendar</button>
+    <button class="navitem" data-p="chores"><span class="ico">✅</span>Chores</button>
+    <button class="navitem" data-p="meals"><span class="ico">🍽️</span>Meals</button>
+    <button class="navitem" data-p="lists"><span class="ico">📝</span>Lists</button>
+    <div class="railspacer"></div>
+    <button class="navitem" id="sleepBtn"><span class="ico">🌙</span>Sleep</button>
+    <button class="navitem" data-p="settings"><span class="ico">⚙️</span>Settings</button>
+  </nav>
+
+  <div class="main">
+
+    <!-- ===== INFO BAR (no weather) ===== -->
+    <div class="infobar">
+      <div class="famname">Badawy Family</div>
+      <div class="clock">7:50 PM</div>
+      <div class="cdchip" id="cdchip">🏖️ Trip to Alex <b>· 12 days</b></div>
+      <div class="ibspacer"></div>
+      <div class="segs" id="viewsegs">
+        <button class="seg on" data-v="sched">Schedule</button>
+        <button class="seg" data-v="day">Day</button>
+        <button class="seg" data-v="week">Week</button>
+        <button class="seg" data-v="month">Month</button>
+      </div>
+      <button class="ibtn">⚲ Filter</button>
+      <button class="ibtn">Today</button>
+    </div>
+
+    <!-- ===== PEOPLE STRIP ===== -->
+    <div class="people">
+      <div class="person"><div class="av" style="background:var(--teal)">🥸</div>
+        <div class="pmeta"><div class="pname">Daddy</div><div class="pbar"><i style="width:33%;background:var(--teal)"></i></div></div>
+        <div class="pfrac">1/3</div></div>
+      <div class="person"><div class="av" style="background:var(--red)">👩</div>
+        <div class="pmeta"><div class="pname">Suzy</div><div class="pbar"><i style="width:50%;background:var(--red)"></i></div></div>
+        <div class="pfrac">2/4</div></div>
+      <div class="person"><div class="av" style="background:var(--blue)">⛹️</div>
+        <div class="pmeta"><div class="pname">Nono</div><div class="pbar"><i style="width:75%;background:var(--blue)"></i></div></div>
+        <div class="pfrac">3/4</div></div>
+      <div class="person"><div class="av" style="background:var(--green)">⛹️</div>
+        <div class="pmeta"><div class="pname">Doma</div><div class="pbar"><i style="width:33%;background:var(--green)"></i></div></div>
+        <div class="pfrac">1/3</div></div>
+    </div>
+
+    <!-- ===== SCHEDULE (DEFAULT) ===== -->
+    <section class="pane" id="p-sched">
+      <div class="sched">
+
+        <div class="scol">
+          <div class="shd"><div class="wd">Friday</div><div class="dn">Aug 7 <span class="badge">TODAY</span></div></div>
+          <div class="sbody">
+            <div class="sev" style="background:var(--teal-t);border-color:var(--teal)"><div class="ti">Pick up dry cleaning</div><div class="tm">8:15 – 8:45 AM</div><div class="who" style="background:var(--teal)">D</div></div>
+            <div class="sev" style="background:var(--red-t);border-color:var(--red)"><div class="ti">Pilates</div><div class="tm">9:00 – 10:00 AM</div><div class="who" style="background:var(--red)">S</div></div>
+            <div class="sev" style="background:var(--blue-t);border-color:var(--blue)"><div class="ti">Pep rally</div><div class="tm">12:00 – 1:00 PM</div><div class="who" style="background:var(--blue)">N</div></div>
+            <div class="sev" style="background:#fff;border:1px dashed var(--line);border-left:3px solid var(--slate)"><div class="ti">☑ Take bins out</div><div class="tm">Up for grabs · 5★</div></div>
+          </div>
+          <div class="sfoot">
+            <div class="r">🍽️ <b>Sheet-pan chicken</b></div>
+            <div class="chores">Chores 7 of 14 done</div>
+          </div>
+        </div>
+
+        <div class="scol">
+          <div class="shd"><div class="wd">Saturday</div><div class="dn">Aug 8</div></div>
+          <div class="sbody">
+            <div class="sad" style="background:var(--purple-t);color:#4C3B77">🐼 Zoo trip · all day</div>
+            <div class="sev" style="background:var(--amber-t);border-color:var(--amber)"><div class="ti">Breakfast with Grandma</div><div class="tm">9:00 – 10:30 AM</div><div class="who" style="background:var(--amber)">S</div></div>
+            <div class="sev" style="background:var(--teal-t);border-color:var(--teal)"><div class="ti">Donation drop-off</div><div class="tm">10:30 – 11:30 AM</div><div class="who" style="background:var(--teal)">D</div></div>
+          </div>
+          <div class="sfoot">
+            <div class="r">🍽️ <b>Pizza night</b></div>
+            <div class="chores">Chores 0 of 12 done</div>
+          </div>
+        </div>
+
+        <div class="scol">
+          <div class="shd"><div class="wd">Sunday</div><div class="dn">Aug 9</div></div>
+          <div class="sbody">
+            <div class="sev" style="background:var(--red-t);border-color:var(--red)"><div class="ti">Grocery run</div><div class="tm">9:30 – 10:30 AM</div><div class="who" style="background:var(--red)">S</div></div>
+            <div class="sev" style="background:var(--green-t);border-color:var(--green)"><div class="ti">Volunteering, food bank</div><div class="tm">12:15 – 2:45 PM</div><div class="who" style="background:var(--green)">Do</div></div>
+          </div>
+          <div class="sfoot">
+            <div class="r">🍽️ <b>Koshari</b></div>
+            <div class="chores">Chores 0 of 12 done</div>
+          </div>
+        </div>
+
+        <div class="scol">
+          <div class="shd"><div class="wd">Monday</div><div class="dn">Aug 10</div></div>
+          <div class="sbody">
+            <div class="sev" style="background:var(--teal-t);border-color:var(--teal)"><div class="ti">Team breakfast</div><div class="tm">8:00 – 8:30 AM</div><div class="who" style="background:var(--teal)">D</div></div>
+            <div class="sev" style="background:var(--amber-t);border-color:var(--amber)"><div class="ti">Housecleaner</div><div class="tm">10:30 AM – 2:00 PM</div><div class="who" style="background:var(--amber)">S</div></div>
+            <div class="sev" style="background:#fff;border:1px dashed var(--line);border-left:3px solid var(--blue)"><div class="ti">☑ Library books due</div><div class="tm">Nono</div></div>
+          </div>
+          <div class="sfoot">
+            <div class="r">🍽️ <b>Leftovers</b></div>
+            <div class="chores">Chores 0 of 14 done</div>
+          </div>
+        </div>
+
+        <div class="scol">
+          <div class="shd"><div class="wd">Tuesday</div><div class="dn">Aug 11</div></div>
+          <div class="sbody">
+            <div class="sad" style="background:var(--amber-t);color:#8A5C12">🗑️ Garbage day</div>
+            <div class="sev" style="background:var(--green-t);border-color:var(--green)"><div class="ti">Dentist — Doma</div><div class="tm">10:00 – 11:00 AM</div><div class="who" style="background:var(--green)">Do</div></div>
+            <div class="sev" style="background:var(--blue-t);border-color:var(--blue)"><div class="ti">Math quiz</div><div class="tm">12:15 – 1:15 PM</div><div class="who" style="background:var(--blue)">N</div></div>
+          </div>
+          <div class="sfoot">
+            <div class="r">🍽️ <b>Molokhia</b></div>
+            <div class="chores">Chores 0 of 14 done</div>
+          </div>
+        </div>
+
+      </div>
+      <button class="fab">＋</button>
+    </section>
+
+    <!-- ===== WEEK ===== -->
+    <section class="pane" id="p-week" hidden>
+      <div class="wk">
+        <div class="wkhead">
+          <div></div>
+          <div class="dh"><div class="wd">Mon</div><div class="dn">3</div></div>
+          <div class="dh"><div class="wd">Tue</div><div class="dn">4</div></div>
+          <div class="dh"><div class="wd">Wed</div><div class="dn">5</div></div>
+          <div class="dh"><div class="wd">Thu</div><div class="dn">6</div></div>
+          <div class="dh today"><div class="wd">Fri</div><div class="dn">7</div></div>
+          <div class="dh wknd"><div class="wd">Sat</div><div class="dn">8</div></div>
+          <div class="dh wknd"><div class="wd">Sun</div><div class="dn">9</div></div>
+        </div>
+        <div class="allday">
+          <div class="lbl">all-day</div>
+          <div class="adcell"></div><div class="adcell"></div>
+          <div class="adcell"><div class="adchip" style="background:var(--amber-t);color:#8A5C12">🗑️ Garbage day</div></div>
+          <div class="adcell"></div><div class="adcell"></div>
+          <div class="adcell"><div class="adchip" style="background:var(--purple-t);color:#4C3B77">🐼 Zoo trip</div></div>
+          <div class="adcell"></div>
+        </div>
+        <div class="wkbody" id="wkbody"><div class="grid" id="wkgrid"></div></div>
+      </div>
+      <button class="fab">＋</button>
+    </section>
+
+    <!-- ===== MONTH ===== -->
+    <section class="pane" id="p-month" hidden>
+      <div class="mo">
+        <div class="mohd"><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div></div>
+        <div class="mogrid" id="mogrid"></div>
+      </div>
+      <button class="fab">＋</button>
+    </section>
+
+    <!-- ===== CHORES + REWARDS ===== -->
+    <section class="pane" id="p-chores" hidden>
+      <div class="chores">
+        <div class="rewardbar">
+          <div class="rw"><div class="av" style="background:var(--blue)">⛹️</div>
+            <div class="goal"><div class="gname">Nono · 42★ → 🎮 Game hour (50★)</div><div class="gbar"><i style="width:84%"></i></div></div>
+            <button class="rbtn off">8 to go</button></div>
+          <div class="rw"><div class="av" style="background:var(--green)">⛹️</div>
+            <div class="goal"><div class="gname">Doma · 18★ → 🍦 Ice cream (15★)</div><div class="gbar"><i style="width:100%"></i></div></div>
+            <button class="rbtn">Redeem</button></div>
+        </div>
+        <div class="tasks">
+          <div class="tcol">
+            <div class="tchead"><div class="nm">🙋 Up for grabs</div></div>
+            <div class="titem"><span class="tick"></span><span class="em">🚮</span><span class="lbl">Take bins out</span><span class="pts">5★</span></div>
+            <div class="titem"><span class="tick"></span><span class="em">🌱</span><span class="lbl">Water plants</span><span class="pts">3★</span></div>
+          </div>
+          <div class="tcol">
+            <div class="tchead"><div class="av" style="background:var(--blue)">⛹️</div><div class="nm">Nono</div><div class="st">42★</div></div>
+            <div class="tgroup">Morning</div>
+            <div class="titem done"><span class="tick">✓</span><span class="em">🦷</span><span class="lbl">Brush teeth</span><span class="pts">5★</span></div>
+            <div class="titem done"><span class="tick">✓</span><span class="em">🛏️</span><span class="lbl">Make bed</span><span class="pts">5★</span></div>
+            <div class="tgroup">Afternoon</div>
+            <div class="titem done"><span class="tick">✓</span><span class="em">📚</span><span class="lbl">Homework</span><span class="pts">10★</span></div>
+            <div class="tgroup">Evening</div>
+            <div class="titem"><span class="tick"></span><span class="em">🧸</span><span class="lbl">Tidy toys</span><span class="pts">5★</span></div>
+          </div>
+          <div class="tcol">
+            <div class="tchead"><div class="av" style="background:var(--green)">⛹️</div><div class="nm">Doma</div><div class="st">18★</div></div>
+            <div class="tgroup">Morning</div>
+            <div class="titem done"><span class="tick">✓</span><span class="em">🦷</span><span class="lbl">Brush teeth</span><span class="pts">5★</span></div>
+            <div class="titem"><span class="tick"></span><span class="em">👕</span><span class="lbl">Get dressed</span><span class="pts">5★</span></div>
+            <div class="tgroup">Evening</div>
+            <div class="titem"><span class="tick"></span><span class="em">📖</span><span class="lbl">Read 15 min</span><span class="pts">10★</span></div>
+          </div>
+          <div class="tcol">
+            <div class="tchead"><div class="av" style="background:var(--red)">👩</div><div class="nm">Suzy</div><div class="st">—</div></div>
+            <div class="tgroup">Today</div>
+            <div class="titem done"><span class="tick">✓</span><span class="em">🧺</span><span class="lbl">Laundry</span></div>
+            <div class="titem done"><span class="tick">✓</span><span class="em">🛒</span><span class="lbl">Order groceries</span></div>
+            <div class="titem"><span class="tick"></span><span class="em">📞</span><span class="lbl">Call the school</span></div>
+            <div class="titem"><span class="tick"></span><span class="em">💊</span><span class="lbl">Refill Rx</span></div>
+          </div>
+          <div class="tcol">
+            <div class="tchead"><div class="av" style="background:var(--teal)">🥸</div><div class="nm">Daddy</div><div class="st">—</div></div>
+            <div class="tgroup">Today</div>
+            <div class="titem done"><span class="tick">✓</span><span class="em">🚗</span><span class="lbl">School run</span></div>
+            <div class="titem"><span class="tick"></span><span class="em">🧾</span><span class="lbl">Pay water bill</span></div>
+            <div class="titem"><span class="tick"></span><span class="em">🔧</span><span class="lbl">Fix cabinet door</span></div>
+          </div>
+        </div>
+      </div>
+      <button class="fab">＋</button>
+    </section>
+
+    <!-- ===== MEALS ===== -->
+    <section class="pane" id="p-meals" hidden>
+      <div class="meals">
+        <div class="mgrid">
+          <div></div>
+          <div class="mdayhd">Mon 3</div><div class="mdayhd">Tue 4</div><div class="mdayhd">Wed 5</div>
+          <div class="mdayhd">Thu 6</div><div class="mdayhd">Fri 7</div><div class="mdayhd">Sat 8</div><div class="mdayhd">Sun 9</div>
+          <div class="mrow-lbl">Breakfast</div>
+          <div class="mcell">🥣 Oats</div><div class="mcell">🥚 Eggs</div><div class="mcell">🥣 Oats</div>
+          <div class="mcell">🥞 Pancakes</div><div class="mcell">🥚 Eggs</div><div class="mcell">🧇 Waffles</div><div class="mcell"><span class="add">＋</span></div>
+          <div class="mrow-lbl">Lunch</div>
+          <div class="mcell">🥪 Sandwiches</div><div class="mcell"><span class="add">＋</span></div><div class="mcell">🍝 Pasta</div>
+          <div class="mcell">🥗 Salad</div><div class="mcell"><span class="add">＋</span></div><div class="mcell">🌯 Wraps</div><div class="mcell">🍲 Soup</div>
+          <div class="mrow-lbl">Dinner</div>
+          <div class="mcell">🍗 Sheet-pan chicken</div><div class="mcell">🐟 Salmon + rice</div><div class="mcell">🌮 Taco night</div>
+          <div class="mcell">🍛 Molokhia</div><div class="mcell">🍕 Pizza night</div><div class="mcell">🥘 Koshari</div><div class="mcell"><span class="add">＋</span></div>
+        </div>
+      </div>
+      <button class="fab">＋</button>
+    </section>
+
+    <!-- ===== LISTS ===== -->
+    <section class="pane" id="p-lists" hidden>
+      <div class="lists">
+        <div class="lcard"><h4><span class="swatch" style="background:var(--green)"></span>Groceries</h4>
+          <div class="addbox">＋ Add item…</div>
+          <div class="li"><span class="tick"></span>Milk (2)</div>
+          <div class="li"><span class="tick"></span>Chicken thighs</div>
+          <div class="li"><span class="tick"></span>Rice</div>
+          <div class="li done"><span class="tick" style="background:var(--green);border-color:var(--green);color:#fff">✓</span>Bananas</div>
+        </div>
+        <div class="lcard"><h4><span class="swatch" style="background:var(--blue)"></span>School</h4>
+          <div class="addbox">＋ Add item…</div>
+          <div class="li"><span class="tick"></span>Sign permission slip</div>
+          <div class="li"><span class="tick"></span>New gym shoes — Doma</div>
+          <div class="li done"><span class="tick" style="background:var(--green);border-color:var(--green);color:#fff">✓</span>Parent-teacher form</div>
+        </div>
+        <div class="lcard"><h4><span class="swatch" style="background:var(--purple)"></span>House</h4>
+          <div class="addbox">＋ Add item…</div>
+          <div class="li"><span class="tick"></span>AC filter</div>
+          <div class="li"><span class="tick"></span>Call plumber</div>
+          <div class="li"><span class="tick"></span>Light bulbs — hallway</div>
+        </div>
+      </div>
+      <button class="fab">＋</button>
+    </section>
+
+    <!-- ===== COUNTDOWNS ===== -->
+    <section class="pane" id="p-cds" hidden>
+      <div class="cds">
+        <div class="cd"><div class="emo">🏖️</div><div><div class="n">Trip to Alex</div><div class="w">Thu 21 Aug</div></div>
+          <div class="days"><b>12</b><span>days</span></div></div>
+        <div class="cd"><div class="emo">🎂</div><div><div class="n">Nono's birthday</div><div class="w">Sat 6 Sep</div></div>
+          <div class="days"><b>28</b><span>days</span></div></div>
+        <div class="cd"><div class="emo">🎒</div><div><div class="n">First day of school</div><div class="w">Mon 8 Sep</div></div>
+          <div class="days"><b>30</b><span>days</span></div></div>
+        <div class="cd"><div class="emo">✈️</div><div><div class="n">Grandma visits</div><div class="w">Fri 3 Oct</div></div>
+          <div class="days"><b>55</b><span>days</span></div></div>
+      </div>
+      <button class="fab">＋</button>
+    </section>
+
+    <section class="pane" id="p-other" hidden>
+      <div class="ph"><div style="font-size:38px">⚙️</div><div>Settings — profiles, density &amp; text size, sleep schedule, PIN,<br>schedule day-count, countdowns. Money lives on phone only.</div></div>
+    </section>
+
+  </div>
+
+  <!-- ===== AMBIENT ===== -->
+  <div class="ambient" id="ambient">
+    <div>
+      <div class="big">7:50</div>
+      <div class="sub">Friday, August 7</div>
+    </div>
+    <div class="agenda">
+      <div class="acard"><div class="k">Next up</div><div class="v">Pep rally</div><div class="m">12:00 PM · Nono</div></div>
+      <div class="acard"><div class="k">Dinner tonight</div><div class="v">🍗 Sheet-pan chicken</div><div class="m">Suzy cooking</div></div>
+      <div class="acard"><div class="k">Chores left</div><div class="v">7 of 14</div><div class="m">Nono 3/4 · Doma 1/3</div></div>
+      <div class="acard"><div class="k">Countdown</div><div class="v">🏖️ Trip to Alex</div><div class="m">in 12 days</div></div>
+    </div>
+    <div class="hint">Tap anywhere to wake · Sleep mode blanks the screen 10 PM – 6 AM</div>
+  </div>
+
+</div>
+
+<div class="caption"><b>Schedule is the hero.</b> Five day-columns starting on today, each with a pinned footer for that night's dinner and chore progress — the glance a wall screen actually earns its place with. Week is the full time grid behind the second pill. The countdown chip sits where weather would have been.</div>
+
+<script>
+/* ---------- week grid ---------- */
+const START=7,END=21,H=56;
+const grid=document.getElementById('wkgrid');
+let gut='<div class="gutter">';
+for(let h=START;h<=END;h++){const ap=h<12?'AM':'PM';const hh=h%12===0?12:h%12;gut+=`<div class="hr"><span class="t">${hh} ${ap}</span></div>`;}
+gut+='</div>';
+let cols='';
+for(let d=0;d<7;d++){cols+=`<div class="col${d>4?' wknd':''}" data-d="${d}">`;for(let h=START;h<=END;h++)cols+='<div class="hr"></div>';cols+='</div>';}
+grid.innerHTML=gut+cols;
+const EV=[
+ [0,8,8.5,'Team breakfast','teal','D'],[0,10.5,14,'Housecleaner','amber','S'],[0,9,10,'Pilates','red','S'],
+ [1,8.5,9.5,'Drop off dry cleaning','teal','D'],[1,10,11,'Dentist','green','Do'],[1,12.25,13.25,'Math quiz','blue','N'],
+ [2,9.5,10.5,'History test','blue','N'],[2,11,12.5,'Nature center visit','purple','Do'],
+ [3,8,9,'Coffee with Diane','red','S'],[3,10.25,12.25,'Pest control','teal','D'],[3,13.5,15.5,'Dr. appointment','purple','Do'],
+ [4,8.25,8.75,'Pick up dry cleaning','teal','D'],[4,9,10,'Pilates','red','S'],[4,12,13,'Pep rally','blue','N'],
+ [5,9,10.5,'Breakfast with Grandma','amber','S'],[5,10.5,11.5,'Donation drop-off','teal','D'],[5,13,15,'🐼 Zoo trip','purple','Do'],
+ [6,9.5,10.5,'Grocery run','red','S'],[6,12.25,14.75,'Volunteering, food bank','green','Do'],
+];
+const fmt=v=>{const h=Math.floor(v),m=Math.round((v-h)*60),ap=h<12?'AM':'PM',hh=h%12===0?12:h%12;return m?`${hh}:${String(m).padStart(2,'0')} ${ap}`:`${hh} ${ap}`};
+EV.forEach(([d,s,e,ti,c,who])=>{
+  const col=grid.querySelector(`.col[data-d="${d}"]`);
+  const div=document.createElement('div');div.className='ev';
+  div.style.cssText=`top:${(s-START)*H+1}px;height:${Math.max((e-s)*H-3,26)}px;background:var(--${c}-t);border-left-color:var(--${c});color:#3a332c`;
+  div.innerHTML=`<div class="ti">${ti}</div><div class="tm">${fmt(s)} – ${fmt(e)}</div><div class="who" style="background:var(--${c})">${who}</div>`;
+  col.appendChild(div);
+});
+[[2,15,'☑ Dog bath'],[4,16,'☑ Take bins out']].forEach(([d,h,t])=>{
+  const col=grid.querySelector(`.col[data-d="${d}"]`);const div=document.createElement('div');
+  div.className='ev task';div.style.cssText=`top:${(h-START)*H+1}px;height:26px;border-left-color:var(--slate)`;
+  div.innerHTML=`<div class="ti" style="font-size:10.5px">${t}</div>`;col.appendChild(div);
+});
+const nl=document.createElement('div');nl.className='nowline';nl.style.top=((19.83-START)*H+9)+'px';
+document.getElementById('wkbody').appendChild(nl);
+document.getElementById('wkbody').scrollTop=(8-START)*H;
+
+/* ---------- month ---------- */
+const mo=document.getElementById('mogrid');
+const MEV={3:[['Team breakfast','teal']],4:[['Dentist','green'],['Math quiz','blue']],
+ 5:[['Garbage day','amber'],['History test','blue'],['Nature ctr','purple'],['x','x']],
+ 6:[['Coffee w/ Diane','red'],['Pest control','teal']],7:[['Pilates','red'],['Pep rally','blue']],
+ 8:[['Zoo trip','purple'],['Grandma','amber']],9:[['Grocery run','red'],['Food bank','green']],
+ 12:[['Housecleaner','amber']],14:[['Swim lesson','blue']],21:[['🏖️ Trip to Alex','purple']],18:[['Dentist','green']]};
+let cells='';
+for(let i=0;i<35;i++){
+  const dnum=i-4; const inMonth=dnum>=1&&dnum<=31;
+  const wknd=(i%7)>4;
+  let chips='';const list=MEV[dnum]||[];
+  list.slice(0,3).forEach(([t,c])=>{ if(c==='x'){chips+='<div class="more">+2 more</div>';return;}
+    chips+=`<div class="mchip" style="background:var(--${c}-t);border-left-color:var(--${c})">${t}</div>`;});
+  cells+=`<div class="mc${wknd?' wknd':''}${inMonth?'':' dim'}${dnum===7?' today':''}"><div class="d">${inMonth?dnum:(dnum<1?27+dnum+4:dnum-31)}</div>${chips}</div>`;
+}
+mo.innerHTML=cells;
+
+/* ---------- panes ---------- */
+const map={cal:null,chores:'p-chores',meals:'p-meals',lists:'p-lists',settings:'p-other'};
+const all=['p-sched','p-week','p-month','p-chores','p-meals','p-lists','p-cds','p-other'];
+function show(id){all.forEach(p=>document.getElementById(p).hidden=(p!==id));
+  document.getElementById('viewsegs').style.visibility=['p-sched','p-week','p-month'].includes(id)?'visible':'hidden';}
+function railOn(sel){document.querySelectorAll('.navitem').forEach(x=>x.classList.remove('on'));
+  if(sel)document.querySelector(sel).classList.add('on');}
+document.querySelectorAll('.navitem[data-p]').forEach(b=>b.onclick=()=>{
+  railOn(null);b.classList.add('on');
+  show(b.dataset.p==='cal'?({sched:'p-sched',day:'p-sched',week:'p-week',month:'p-month'})[document.querySelector('.seg.on').dataset.v]:map[b.dataset.p]);
+});
+document.querySelectorAll('#viewsegs .seg').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#viewsegs .seg').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  railOn('.navitem[data-p="cal"]');
+  show({sched:'p-sched',day:'p-sched',week:'p-week',month:'p-month'}[b.dataset.v]);
+});
+document.getElementById('cdchip').onclick=()=>{railOn(null);show('p-cds');};
+document.querySelectorAll('.titem').forEach(t=>t.onclick=()=>{t.classList.toggle('done');t.querySelector('.tick').textContent=t.classList.contains('done')?'✓':'';});
+document.querySelectorAll('.person').forEach(p=>p.onclick=()=>p.classList.toggle('off'));
+const amb=document.getElementById('ambient');
+document.getElementById('sleepBtn').onclick=()=>amb.classList.add('show');
+amb.onclick=()=>amb.classList.remove('show');
+</script>
+</body>
+</html>
