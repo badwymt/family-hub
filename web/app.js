@@ -2711,6 +2711,39 @@ const createListItem = (p) => supabase.from("list_items").insert({ family_id: st
 const updateListItem = (id, p) => supabase.from("list_items").update(p).eq("id", id);
 const delListItem = (id) => supabase.from("list_items").delete().eq("id", id);
 
+function openListForm(order) {
+  const ov = document.createElement("div"); ov.className = "modal-overlay";
+  ov.innerHTML = `<form class="modal" id="nlForm">
+    <div class="modal-top"><button type="button" class="iconbtn" id="nlClose">✕</button>
+      <strong>New list</strong><button type="submit" id="nlSave">Save</button></div>
+    <div class="modal-body">
+      <label>Name</label>
+      <input id="nl_name" required placeholder="School" />
+      <label>Colour</label>
+      <div class="swatchrow" id="nl_colors">${Object.keys(COLORS).map((c, i) =>
+        `<button type="button" class="swatch${i === 0 ? " sel" : ""}" data-c="${c}"
+                 style="background:${colorFor(c)}" aria-label="${c}"></button>`).join("")}</div>
+      <div class="err" id="nlErr"></div>
+    </div></form>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  document.getElementById("nlClose").onclick = close;
+  let chosen = Object.keys(COLORS)[0];
+  ov.querySelectorAll(".swatch").forEach((b) => b.onclick = () => {
+    chosen = b.dataset.c; ov.querySelectorAll(".swatch").forEach((x) => x.classList.toggle("sel", x === b));
+  });
+  setTimeout(() => document.getElementById("nl_name").focus(), 30);
+  document.getElementById("nlForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = document.getElementById("nl_name").value.trim();
+    if (!name) return;
+    const { error } = await createList({ name, color: chosen, sort_order: order });
+    if (error) { document.getElementById("nlErr").textContent = error.message; return; }
+    close(); renderLists();
+  });
+}
+
 async function viewLists() {
   await loadContext();
   await renderLists();
@@ -2729,7 +2762,10 @@ async function renderLists() {
     <div class="lcard" data-list="${esc(id)}">
       <h4><span class="lsw" style="background:${colorFor(color)}"></span>${esc(name)}
         ${virtual ? `<span class="hint" style="display:inline;margin-left:auto">from Meals</span>` : ""}</h4>
-      ${virtual ? "" : `<button class="laddbox" data-add="${esc(id)}">＋ Add item…</button>`}
+      ${virtual ? "" : `<form class="laddrow" data-add="${esc(id)}">
+        <input class="laddinput" placeholder="Add an item…" aria-label="Add an item to ${esc(name)}" />
+        <button type="submit" class="laddgo" aria-label="Add">＋</button>
+      </form>`}
       ${rows.length ? rows.map((r) => `
         <div class="li${r.done ? " done" : ""}" data-item="${esc(r.id)}" data-virtual="${virtual ? 1 : 0}">
           <span class="litick">${r.done ? "✓" : ""}</span><span class="litx">${esc(r.text)}</span>
@@ -2751,17 +2787,17 @@ async function renderLists() {
     </section>`;
 
   document.getElementById("hideDone").onchange = (e) => { state.hideDone = e.target.checked; renderLists(); };
-  document.getElementById("addList").onclick = async () => {
-    const name = prompt("New list name"); if (!name) return;
-    const { error } = await createList({ name: name.trim(), color: "slate", sort_order: lists.length });
-    if (error) return alert(error.message);
-    renderLists();
-  };
-  el.querySelectorAll("[data-add]").forEach((b) => b.onclick = async () => {
-    const t = prompt("Add item"); if (!t) return;
-    const { error } = await createListItem({ list_id: b.dataset.add, text: t.trim(), sort_order: Date.now() % 100000 });
-    if (error) return alert(error.message);
-    renderLists();
+  document.getElementById("addList").onclick = () => openListForm(lists.length);
+  el.querySelectorAll(".laddrow").forEach((f) => {
+    f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const inp = f.querySelector(".laddinput");
+      const t = inp.value.trim(); if (!t) return;
+      inp.value = ""; inp.focus();                       // stay put: people add several at once
+      const { error } = await createListItem({ list_id: f.dataset.add, text: t, sort_order: Date.now() % 100000 });
+      if (error) return toast(error.message);
+      renderLists();
+    });
   });
   el.querySelectorAll(".li").forEach((r) => r.onclick = async () => {
     const done = !r.classList.contains("done");

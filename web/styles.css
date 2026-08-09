@@ -986,3 +986,26 @@ html.kidmode body{ display:block; }
 .cstreak{ font-size:10px; font-weight:800; color:var(--accent);
   background:var(--accent-soft); border-radius:999px; padding:1px 6px; vertical-align:middle; }
 .cpts.bonus{ color:#fff; background:var(--star); border-radius:999px; padding:2px 7px; }
+
+/* ---- W12: Lists gets a real inline add row (prompt() is unusable on a wall) ---- */
+.laddrow{ display:flex; gap:8px; margin:9px 0; }
+.laddinput{ flex:1; min-height:44px; padding:10px 12px; border-radius:10px;
+  border:1px dashed var(--line); background:var(--panel2); font:inherit; color:var(--text); }
+.laddinput:focus{ border-style:solid; border-color:var(--accent); }
+.laddgo{ flex:0 0 44px; min-height:44px; padding:0; border-radius:10px; font-size:20px; line-height:1; }
+
+/* ---- W12: modules must actually use the wall. .card capped at 380px, which is why
+     Meals rendered one narrow column in a 1400px pane. The login/picker card lives
+     inside .center and keeps its narrow width. ---- */
+@media (min-width:1000px) and (orientation:landscape){
+  .content .card{ max-width:none; padding:18px; }
+  .content .card + .card{ margin-top:14px; }
+  /* pantry / buy lists read as columns, not one long ribbon */
+  /* the in-house / buy lists flow into columns instead of one long ribbon down
+     the left edge of a 1400px pane */
+  #mealbody .card{ columns:3 320px; column-gap:30px; }
+  #mealbody .card > .mealhead,#mealbody .card > p.sub{ column-span:all; }
+  #mealbody .mrow,#mealbody .catlbl,#mealbody .planday{ break-inside:avoid; }
+  #mealbody .planweek{ columns:auto; }
+  .lists .lcard{ max-width:none; }
+}
