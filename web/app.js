@@ -213,6 +213,7 @@ async function render() {
     if (route.startsWith("#/hub")) return needMember(viewHub);
     if (route.startsWith("#/home")) return needMember(viewCalendar);
     if (route.startsWith("#/tasks")) return needMember(viewTasks);
+    if (route.startsWith("#/kid/")) return needMember(() => viewKidMode(route.slice(6)));
     if (route.startsWith("#/stars") || route.startsWith("#/rewards")) return go("#/tasks");
     if (route.startsWith("#/finance")) return kidBlocked(viewFinance);
     if (route.startsWith("#/meals")) return kidBlocked(viewMeals);
@@ -409,7 +410,19 @@ async function renderPeopleStrip() {
     </button>`;
   }).join("");
   strip.querySelectorAll(".person").forEach((b) => {
+    // tap = filter; long-press a KID = Kid Mode. No double-tap anywhere: 3-6 year olds
+    // succeed at tap 98.7% of the time and double-tap only 82.8%.
+    let held = false, timer = null;
+    const start = () => {
+      if (b.dataset.kid !== "1") return;
+      held = false;
+      timer = setTimeout(() => { held = true; b.classList.add("holding"); go(`#/kid/${b.dataset.m}`); }, 600);
+    };
+    const stop = () => { clearTimeout(timer); b.classList.remove("holding"); };
+    b.addEventListener("pointerdown", start);
+    ["pointerup", "pointerleave", "pointercancel"].forEach((e) => b.addEventListener(e, stop));
     b.onclick = () => {
+      if (held) { held = false; return; }
       const id = b.dataset.m;
       if (state.hiddenMembers.has(id)) state.hiddenMembers.delete(id); else state.hiddenMembers.add(id);
       renderPeopleStrip();
@@ -598,6 +611,14 @@ function openMemberForm(member) {
         <label>Avatar (emoji or a single letter)</label>
         <input id="m_avatar" maxlength="8" value="${esc(cur.avatar_url || "")}" placeholder="🙂 (leave blank for initials)" />
         <label class="inline"><input type="checkbox" id="m_child" ${cur.is_child ? "checked" : ""} /> This member is a kid</label>
+        <label>Chore screen</label>
+        <select id="m_mode">
+          <option value=""${!cur.chore_mode ? " selected" : ""}>Auto (from age)</option>
+          <option value="prereader"${cur.chore_mode === "prereader" ? " selected" : ""}>Pre-reader — big picture cards, read aloud</option>
+          <option value="reader"${cur.chore_mode === "reader" ? " selected" : ""}>Reader — today's list</option>
+          <option value="adult"${cur.chore_mode === "adult" ? " selected" : ""}>Grown-up</option>
+        </select>
+        <p class="hint">Pre-reader mode shows one routine band at a time with no dates.</p>
         <div class="err" id="mErr"></div>
       </div>
     </form>`;
@@ -621,6 +642,7 @@ function openMemberForm(member) {
     if (!name) { err.textContent = "Name is required."; return; }
     const payload = {
       name, color: chosen, is_child: document.getElementById("m_child").checked,
+      chore_mode: document.getElementById("m_mode").value || null,
       avatar_url: document.getElementById("m_avatar").value.trim() || null,
     };
     const save = document.getElementById("mSave"); save.disabled = true; save.textContent = "Saving…";
@@ -2315,7 +2337,7 @@ async function renderChoreWall() {
       || rewards.slice().sort((a, b) => b.star_cost - a.star_cost)[0];
     const afford = next && bal >= next.star_cost;
     const pct = next ? Math.min(100, Math.round((bal / Math.max(1, next.star_cost)) * 100)) : 0;
-    return `<div class="rwcard">${avatarHTML(m, "avatar sm")}
+    return `<div class="rwcard"><button class="rwav" data-kid="${m.id}" title="Open ${esc(m.name)}'s screen">${avatarHTML(m, "avatar sm")}</button>
       <span class="rwgoal">
         <span class="rwnm">${esc(m.name)} · ${bal}⭐${next ? ` → ${esc(next.emoji || "🎁")} ${esc(next.title)} (${next.star_cost}⭐)` : ""}</span>
         <span class="rwbar"><i style="width:${pct}%"></i></span>
@@ -2360,6 +2382,7 @@ async function renderChoreWall() {
     };
   });
 
+  el.querySelectorAll(".rwav").forEach((b) => { b.onclick = () => go(`#/kid/${b.dataset.kid}`); });
   el.querySelectorAll(".rwgo:not(.off)").forEach((b) => {
     b.onclick = async () => {
       if (!(await requirePin("modify"))) return;             // the one irreversible action
@@ -2398,6 +2421,173 @@ function pickClaimant() {
     document.getElementById("cClose").onclick = () => done(null);
     ov.querySelectorAll(".claimtile").forEach((b) => b.onclick = () => done(b.dataset.m));
   });
+}
+
+// ============================================================================
+// W5 — KID MODE: the pre-reader takeover.
+// ----------------------------------------------------------------------------
+// Doma is 5 and cannot read a single word on this screen. Every product that served
+// both ages with one UI ended up rated 6+ and unusable by the younger child, so this
+// is a genuinely different screen, not a smaller one.
+//
+//   - one routine BAND at a time; no dates, no clock times, no week, no "tomorrow"
+//   - the photo or emoji IS the card; the title is secondary and small
+//   - stars are GLYPHS, not a numeral — countable on fingers
+//   - the whole card is the tap target and it toggles; 500ms local celebration
+//   - a speaker reads the title aloud, INDEPENDENT of completion state (First-Then
+//     Visual Schedule's shipped bug is that enabling its checklist disables audio)
+//
+// It is a takeover, not a login: no rail, no other module, exit is free, 60s idle
+// returns to the wall. The PIN guards only redemption.
+// ============================================================================
+const KID_IDLE_MS = 60000;
+const kidModeOf = (m) => m.chore_mode || (m.is_child ? (m.name && /doma/i.test(m.name) ? "prereader" : "reader") : "adult");
+const currentBand = () => { const h = new Date().getHours(); return h < 12 ? "morning" : h < 17 ? "afternoon" : "evening"; };
+
+function speak(text) {
+  try {
+    if (!("speechSynthesis" in window)) return;      // no voice on this box: stay silent,
+    window.speechSynthesis.cancel();                 // never block completion on it
+    const u = new SpeechSynthesisUtterance(String(text));
+    u.rate = 0.85; u.pitch = 1.05;
+    window.speechSynthesis.speak(u);
+  } catch (_) { /* silent fallback */ }
+}
+
+function kidIdleArm() {
+  clearTimeout(state._kidIdle);
+  if (!state.kidMode) return;
+  state._kidIdle = setTimeout(() => {
+    if (document.querySelector(".modal-overlay")) return kidIdleArm();
+    exitKidMode();
+  }, KID_IDLE_MS);
+}
+function exitKidMode() {
+  state.kidMode = null; clearTimeout(state._kidIdle);
+  document.documentElement.classList.remove("kidmode");
+  go(isWall() ? "#/home" : "#/tasks");
+}
+
+async function viewKidMode(memberId) {
+  await loadContext();
+  const m = state.membersById[memberId];
+  if (!m) return go("#/tasks");
+  state.kidMode = memberId;
+  document.documentElement.classList.add("kidmode");
+  await renderKidMode();
+  subscribeRealtime(["tasks", "task_completions", "family_members", "rewards", "redemptions"], () => renderKidMode());
+  kidIdleArm();
+}
+
+async function renderKidMode() {
+  const mid = state.kidMode;
+  const m = state.membersById[mid];
+  if (!m) return exitKidMode();
+  const mode = kidModeOf(m);
+  const pre = mode === "prereader";
+  const todayKey = dateKey(new Date());
+  const ws = new Date(); ws.setHours(0, 0, 0, 0);
+  const we = new Date(ws); we.setDate(we.getDate() + 1);
+
+  let chores = [], doneMap = new Set(), board = [], rewards = [], err = "";
+  try {
+    const r = await fetchTasks(); if (r.error) throw r.error;
+    chores = (r.data || []).filter((t) => t.kind !== "task" && t.assigned_to === mid);
+    doneMap = await fetchDoneMap(chores.map((t) => t.id));
+    const [bd, rw] = await Promise.all([fetchLeaderboard(), fetchRewards()]);
+    board = bd.data || []; rewards = rw.data || [];
+  } catch (e) { err = e.message || String(e); }
+  state.pending = state.pending || new Set(); state.undone = state.undone || new Set();
+
+  const bal = (board.find((x) => x.id === mid) || {}).star_balance || 0;
+  const isDone = (t, occ) => {
+    const cell = `${t.id}|${occ ?? ""}`;
+    if (state.undone.has(cell)) return false;
+    return doneMap.has(cell) || state.pending.has(cell);
+  };
+  const rows = [];
+  for (const t of chores) for (const occ of todaysOccs(t, todayKey, ws, we))
+    rows.push({ task: t, occ, done: isDone(t, occ) });
+  state._kidRows = rows;
+
+  if (!state.kidBand) state.kidBand = currentBand();
+  const inBand = (r) => (bandOf(r.task) || "anytime") === state.kidBand || (!bandOf(r.task) && state.kidBand === currentBand());
+  // at most six cards; a 5-year-old given a wall of identical cards learns nothing
+  const shown = (pre ? rows.filter(inBand) : rows).slice(0, pre ? 6 : 12);
+
+  // cheapest reward is the goal; the board is glyphs so it is countable on fingers
+  const goal = rewards.slice().sort((a, b) => a.star_cost - b.star_cost)[0];
+  const need = goal ? goal.star_cost : 3;
+  const glyphs = Array.from({ length: Math.min(need, 10) }, (_, i) => (i < bal ? "⭐" : "☆")).join("");
+
+  const card = (r, i) => {
+    const t = r.task, a = t.icon_url;
+    const art = a
+      ? (/^(https?:|data:)/.test(a) ? `<img class="kimg" src="${esc(a)}" alt="" />` : `<span class="kemo">${esc(a)}</span>`)
+      : `<span class="kemo">${esc((t.title || "?").trim()[0] || "?")}</span>`;
+    return `<div class="kcard${r.done ? " done" : ""}">
+      <button class="kmain" data-i="${i}" aria-pressed="${r.done}" aria-label="${esc(t.title)}">
+        ${art}<span class="ktitle">${esc(t.title)}</span>
+        ${r.done ? `<span class="kcheck">✓</span>` : ""}
+      </button>
+      <button class="kspeak" data-say="${esc(t.title)}" aria-label="Say ${esc(t.title)}">🔊</button>
+    </div>`;
+  };
+
+  el.innerHTML = `
+    <section class="kidwrap ${pre ? "pre" : "reader"}" style="--kid:${colorFor(m.color)};--kidt:${tintFor(m.color)}">
+      <header class="kidtop">
+        ${avatarHTML(m, "avatar")}
+        <span class="kidname">${esc(m.name)}</span>
+        <span class="kidstars">${pre ? glyphs : `${bal}⭐`}</span>
+        <button class="kidhome" id="kidExit" aria-label="Done">🏠</button>
+      </header>
+      ${pre ? `<div class="kbands">${BANDS.map(([b, label]) =>
+          `<button class="kband${state.kidBand === b ? " on" : ""}" data-b="${b}">${label}</button>`).join("")}</div>`
+        : `<div class="kprog"><i style="width:${rows.length ? Math.round(rows.filter(r=>r.done).length / rows.length * 100) : 0}%"></i>
+             <span>${rows.filter(r=>r.done).length} of ${rows.length}</span></div>`}
+      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <div class="kgrid">${shown.length ? shown.map(card).join("")
+        : `<p class="kdone">All done ${pre ? "🎉" : "— nice work 🎉"}</p>`}</div>
+      ${goal && bal >= goal.star_cost ? `<div class="kprize">
+        <span class="kpe">${esc(goal.emoji || "🎁")}</span><span>${esc(goal.title)}</span>
+        <button class="kpbtn" id="kidRedeem" data-r="${goal.id}">Get it!</button></div>` : ""}
+    </section>`;
+
+  document.getElementById("kidExit").onclick = exitKidMode;
+  el.querySelectorAll(".kband").forEach((b) => { b.onclick = () => { state.kidBand = b.dataset.b; renderKidMode(); kidIdleArm(); }; });
+  el.querySelectorAll(".kspeak").forEach((b) => { b.onclick = () => { speak(b.dataset.say); kidIdleArm(); }; });
+  el.querySelectorAll(".kmain").forEach((b) => {
+    b.onclick = () => {
+      const r = shown[+b.dataset.i];
+      const cell = `${r.task.id}|${r.occ ?? ""}`;
+      if (choreCooldown(cell)) return;
+      kidIdleArm();
+      if (r.done) { enqueueUncomplete(r.task, r.occ, mid); renderKidMode(); flushQueue(); return; }
+      enqueueCompletion(r.task, r.occ, mid);
+      state.undone.delete(cell);
+      cardPop(b.closest(".kcard"));                        // local, ~500ms, non-blocking
+      if (r.task.star_reward > 0) starBurst(r.task.star_reward);
+      if (shown.length && shown.every((x) => x.done || x === r)) celebrate();
+      renderKidMode(); flushQueue();
+    };
+  });
+  const rd = document.getElementById("kidRedeem");
+  if (rd) rd.onclick = async () => {
+    if (!(await requirePin("modify"))) return;             // the one irreversible action
+    const { error } = await supabase.rpc("redeem_reward", { p_member: mid, p_reward: rd.dataset.r });
+    if (error) return alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : error.message);
+    celebrate(); renderKidMode();
+  };
+}
+
+// Card-local, ~500ms. Animated feedback cut children's uncertain re-taps from 238 to 21
+// (Woodward et al., CHI 2016) — this is error prevention, not decoration. Kept short and
+// local because the same study found heavy animation SLOWED 5-6 year olds.
+function cardPop(node) {
+  if (!node) return;
+  node.classList.remove("pop"); void node.offsetWidth; node.classList.add("pop");
+  setTimeout(() => node.classList.remove("pop"), 600);
 }
 
 // ---- Add / Edit task form --------------------------------------------------

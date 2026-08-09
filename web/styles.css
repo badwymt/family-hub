@@ -755,3 +755,60 @@ button.finrow:hover{ border-color:var(--accent); }
   .clbl{ flex:1; font-weight:600; pointer-events:none; }
   .cpts{ font-size:11px; font-weight:800; color:var(--star); pointer-events:none; }
 }
+
+/* ==========================================================================
+   W5 — KID MODE. Full-screen takeover: no rail, no other module, no dates.
+   1280x720 on a 22" panel = 2.63 px/mm, so a 180px card is 68mm — well past the
+   20mm accessible-kiosk floor, which is the point.
+   ========================================================================== */
+html.kidmode #wallRail, html.kidmode #wallInfo, html.kidmode #wallPeople,
+html.kidmode #wallFab, html.kidmode .homefab{ display:none !important; }
+html.kidmode body{ display:block; }
+.kidwrap{ min-height:100dvh; padding:18px 22px 26px; background:var(--bg);
+  display:flex; flex-direction:column; gap:16px; }
+.kidtop{ display:flex; align-items:center; gap:14px; }
+.kidtop .avatar{ width:56px; height:56px; font-size:24px; }
+.kidname{ font-size:26px; font-weight:800; }
+.kidstars{ margin-left:auto; font-size:30px; letter-spacing:4px; }
+.kidhome{ width:56px; height:56px; border-radius:50%; background:var(--panel2); color:var(--text);
+  font-size:24px; padding:0; display:grid; place-items:center; }
+.kbands{ display:flex; gap:12px; }
+.kband{ flex:1; min-height:64px; border-radius:16px; background:var(--panel);
+  border:2px solid var(--line); color:var(--muted); font-size:17px; font-weight:800; }
+.kband.on{ background:var(--kidt); border-color:var(--kid); color:var(--text); }
+.kprog{ position:relative; height:26px; border-radius:13px; background:#EDE5D8; overflow:hidden;
+  display:flex; align-items:center; }
+.kprog i{ position:absolute; inset:0 auto 0 0; background:var(--kid); border-radius:13px; }
+.kprog span{ position:relative; margin-left:12px; font-size:13px; font-weight:800; color:#fff;
+  mix-blend-mode:difference; }
+.kgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:24px; align-content:start; }
+/* pre-reader: a fixed 2x3 so cards are big, not a wall of small ones. auto-fill would
+   lay six 180px tracks and leave two lonely cards at the minimum size. */
+.kidwrap.pre .kgrid{ grid-template-columns:repeat(3,1fr); }
+.kidwrap.reader .kgrid{ grid-template-columns:repeat(4,1fr); }
+.kcard{ position:relative; }
+/* the whole card is the target; hit region padded ~5mm past the visual edge */
+.kmain{ width:100%; min-height:200px; border-radius:22px; background:var(--panel);
+  border:3px solid var(--line); display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:8px; padding:16px; color:var(--text); }
+.kcard::after{ content:""; position:absolute; inset:-13px; pointer-events:none; }
+.kemo{ font-size:64px; line-height:1; }
+.kimg{ width:104px; height:104px; border-radius:16px; object-fit:cover; }
+.ktitle{ font-size:16px; font-weight:700; text-align:center; padding:0 6px; }
+.kcheck{ position:absolute; right:12px; top:10px; font-size:40px; color:var(--green); font-weight:900; }
+/* done = three redundant signals; never colour alone (~8% of boys are red/green deficient) */
+.kcard.done .kmain{ background:var(--panel2); border-color:var(--green); opacity:.62; }
+.kcard.done .kemo,.kcard.done .kimg{ filter:grayscale(1); }
+.kcard.done .ktitle{ text-decoration:line-through; }
+.kspeak{ position:absolute; left:10px; top:10px; width:52px; height:52px; border-radius:50%;
+  background:var(--kidt); color:var(--text); font-size:22px; padding:0; display:grid; place-items:center;
+  border:2px solid var(--kid); }
+.kcard.pop .kmain{ animation:kpop .5s ease; }
+@keyframes kpop{ 0%{transform:scale(1)} 40%{transform:scale(1.06)} 100%{transform:scale(1)} }
+.kdone{ font-size:22px; font-weight:800; color:var(--muted); padding:30px 4px; }
+.kprize{ display:flex; align-items:center; gap:14px; background:#FFF6EC; border:2px solid var(--star);
+  border-radius:20px; padding:14px 18px; font-size:20px; font-weight:800; margin-top:auto; }
+.kpe{ font-size:38px; }
+.kpbtn{ margin-left:auto; background:var(--star); font-size:19px; font-weight:800;
+  border-radius:14px; padding:14px 22px; min-height:56px; }
+@media(prefers-reduced-motion:reduce){ .kcard.pop .kmain{ animation:none; } }
