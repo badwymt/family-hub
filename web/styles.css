@@ -576,3 +576,78 @@ button.finrow:hover{ border-color:var(--accent); }
     place-items:center; background:var(--accent); color:#fff; font-size:32px; line-height:1;
     box-shadow:0 6px 18px rgba(255,122,69,.42); z-index:40; padding:0; }
 }
+
+/* ==========================================================================
+   W2 — SCHEDULE (wall hero), Day sidebar, Month pills, Meals reflow
+   ========================================================================== */
+/* Phone fallback: the same columns stack into a day-sectioned agenda. */
+.sched{ display:flex; flex-direction:column; gap:14px; }
+.scol{ border:1px solid var(--line); border-radius:14px; background:var(--panel); overflow:hidden; }
+.shd{ padding:9px 11px 7px; border-bottom:1px solid var(--line); }
+.shd .swd{ font-size:10.5px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.7px; }
+.shd .dn{ font-size:19px; font-weight:800; line-height:1.15; display:flex; align-items:center; gap:7px; }
+.shd .badge{ font-size:10px; font-weight:800; color:#fff; background:var(--accent); border-radius:999px; padding:2px 8px; letter-spacing:.4px; }
+.sbody{ padding:8px 9px; }
+.sev{ position:relative; display:block; width:100%; text-align:left; border-radius:10px; padding:7px 9px;
+  margin-bottom:6px; border-left:3px solid; background:var(--panel2); cursor:pointer; }
+.sev .ti{ display:block; font-weight:700; font-size:12px; line-height:1.25; }
+.sev .tm{ display:block; font-size:10.5px; opacity:.72; font-weight:600; margin-top:1px; }
+.sev .who{ position:absolute; right:6px; top:7px; width:16px; height:16px; border-radius:50%;
+  font-size:9px; color:#fff; display:grid; place-items:center; font-weight:800; }
+/* chores: same pill, dashed and unfilled — "must do" vs "happens", no legend needed */
+.sev.task{ background:#fff; border:1px dashed var(--line); border-left:3px solid; }
+.sev.task.done{ opacity:.5; }
+.sev.task.done .ti{ text-decoration:line-through; }
+.sfoot{ border-top:1px solid var(--line); padding:8px 11px; background:#FDFAF5;
+  font-size:11.5px; display:flex; flex-direction:column; gap:5px; }
+.sfoot .r{ display:flex; align-items:center; gap:6px; color:#4a443d; }
+.sfoot .chores{ color:var(--muted); font-weight:700; font-size:11px; }
+.empt{ color:#BCB2A4; font-size:11.5px; font-style:italic; margin:6px 2px; }
+
+@media (min-width:1000px) and (orientation:landscape){
+  .content{ display:flex; flex-direction:column; min-height:0; height:100%; padding:12px 16px; }
+  #calbody{ flex:1; min-height:0; }
+  /* the info bar owns Today and the family name; keep the pane's chrome minimal so
+     the pinned footers stay above the fold — that's the whole point of Schedule. */
+  .calnav{ margin-bottom:8px; }
+  .calnav #today{ display:none; }
+  #enableNotif{ font-size:12px !important; margin:0 0 6px !important; }
+  .topbar{ padding:4px 16px; }
+  .app > .content{ overflow:hidden; }
+  .sched{ display:grid; grid-template-columns:repeat(var(--scols,5),1fr); gap:0; height:100%; min-height:0; }
+  .scol{ border:0; border-left:1px solid var(--line); border-radius:0; display:flex; flex-direction:column; min-height:0; }
+  .scol:first-child{ border-left:0; }
+  .scol.today{ background:#FFFDF9; box-shadow:inset 0 3px 0 var(--accent); }
+  .sbody{ flex:1; overflow:auto; min-height:0; }
+  .sfoot{ margin-top:auto; }
+
+  /* ---- Day: 280px sidebar beside the untouched hour grid ---- */
+  #calbody.dayhaswide{ display:grid; grid-template-columns:280px 1fr; gap:14px; align-items:start; }
+  .dayside{ border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:12px; }
+  .dsblock + .dsblock{ margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+  .dsblock h5{ margin:0 0 8px; font-size:10.5px; font-weight:800; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.7px; }
+  .dsrow{ display:flex; align-items:center; gap:8px; padding:5px 0; font-size:13px; }
+  .dsdot{ width:9px; height:9px; border-radius:50%; flex:0 0 9px; }
+  .dsti{ flex:1; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dstm{ color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; font-weight:700; }
+  .dsmeal{ font-size:14px; font-weight:700; }
+
+  /* ---- Month: named pills instead of dots (restyle only, no new features) ---- */
+  .cal-cell{ aspect-ratio:auto; min-height:0; }
+  .cal-grid{ grid-auto-rows:1fr; height:100%; }
+  .cal{ height:100%; display:flex; flex-direction:column; }
+  .cal-grid{ flex:1; min-height:0; }
+  .cal-dots{ display:block; width:100%; margin-top:3px; overflow:hidden; }
+  .mopill{ display:block; font-size:10.5px; font-weight:700; border-radius:5px; padding:1px 5px;
+    margin-bottom:2px; border-left:2px solid; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .momore{ display:block; color:var(--muted); font-weight:700; font-size:10px; }
+
+  /* ---- Meals: the 7-day plan reflows from a stack into 7 columns ---- */
+  .planweek{ display:grid; grid-template-columns:repeat(7,1fr); gap:10px; align-items:start; }
+  .planweek > .mealhead, .planweek > p.sub{ grid-column:1/-1; }
+  .planweek .planday{ min-height:120px; border:1px solid var(--line); border-radius:12px;
+    padding:8px; margin:0; display:flex; flex-direction:column; gap:6px; }
+  .planweek .plandh{ min-height:44px; }
+  .planweek .mealrow{ flex-wrap:wrap; }
+}

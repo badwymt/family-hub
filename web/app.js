@@ -337,7 +337,7 @@ function renderInfoBar() {
     <span class="wclock" id="wallClock">${fmtClock(new Date())}</span>
     <span class="cdslot" id="wallCountdown"></span>
     <span class="ibspacer"></span>
-    ${onCal ? `<span class="segs">${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}</span>` : ""}
+    ${onCal ? `<span class="segs">${vseg("schedule", "Schedule")}${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}</span>` : ""}
     ${onCal ? `<button class="ibtn" id="wallToday">Today</button>` : ""}`;
   if (onCal) {
     document.querySelectorAll("#wallInfo .seg").forEach((b) => {
@@ -814,7 +814,7 @@ async function viewCalendar() {
   const now = new Date();
   if (!state.viewMonth) state.viewMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   if (!state.viewDay) state.viewDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (!state.calView) state.calView = "day";
+  if (!state.calView) state.calView = isWall() ? "schedule" : "day";   // W2: Schedule is the wall's hero view
   if (!state.calMode) state.calMode = "individual";
   if (!state.hiddenMembers) state.hiddenMembers = new Set();
   await renderCalendar();
@@ -823,7 +823,10 @@ async function viewCalendar() {
 
 function shiftCal(dir) {
   if (state.calView === "month") state.viewMonth = new Date(state.viewMonth.getFullYear(), state.viewMonth.getMonth() + dir, 1);
-  else { const d = new Date(state.viewDay); d.setDate(d.getDate() + dir * (state.calView === "week" ? 7 : 1)); state.viewDay = d; }
+  else {
+    const step = state.calView === "week" ? 7 : state.calView === "schedule" ? scheduleCols() : 1;
+    const d = new Date(state.viewDay); d.setDate(d.getDate() + dir * step); state.viewDay = d;
+  }
   renderCalendar();
 }
 
@@ -840,6 +843,12 @@ async function renderCalendar() {
     winStart = weeks[0][0];
     winEnd = new Date(weeks[5][6]); winEnd.setDate(winEnd.getDate() + 1);
     headerLabel = `${MONTHS[vm.getMonth()]} ${vm.getFullYear()}`;
+  } else if (view === "schedule") {
+    const n = scheduleCols();
+    winStart = new Date(state.viewDay); winStart.setHours(0, 0, 0, 0);
+    winEnd = new Date(winStart); winEnd.setDate(winEnd.getDate() + n);
+    const last = new Date(winEnd); last.setDate(last.getDate() - 1);
+    headerLabel = `${MONTHS[winStart.getMonth()].slice(0, 3)} ${winStart.getDate()} – ${MONTHS[last.getMonth()].slice(0, 3)} ${last.getDate()}`;
   } else if (view === "week") {
     const ws = startOfWeek(state.viewDay);
     winStart = new Date(ws);
@@ -872,14 +881,19 @@ async function renderCalendar() {
     for (const m of (mr.data || [])) (mealsByDay[m.day] = mealsByDay[m.day] || []).push(m);
   } catch (e) {}
 
-  // calendar tasks (kind='task') overlaid by due date; overdue rolled onto today
-  let taskCellsByDay = {}, overdue = [];
+  // calendar tasks (kind='task') overlaid by due date; overdue rolled onto today.
+  // W2: the same fetch also yields chores (kind='chore') for the Schedule footer and
+  // the dashed chore pills — one query, one doneMap, two projections.
+  let taskCellsByDay = {}, overdue = [], choreCellsByDay = {};
   try {
     const tr = await fetchTasks();
-    const allT = (tr.data || []).filter((t) => t.kind === "task");
-    const dmap = await fetchDoneMap(allT.map((t) => t.id));
+    const all = tr.data || [];
+    const allT = all.filter((t) => t.kind === "task");
+    const allC = all.filter((t) => t.kind !== "task");
+    const dmap = await fetchDoneMap(all.map((t) => t.id));
     for (const c of taskCells(allT, dmap, winStart, winEnd)) (taskCellsByDay[c.dueKey] = taskCellsByDay[c.dueKey] || []).push(c);
     overdue = overdueCells(allT, dmap, todayKey);
+    for (const c of taskCells(allC, dmap, winStart, winEnd)) (choreCellsByDay[c.dueKey] = choreCellsByDay[c.dueKey] || []).push(c);
   } catch (e) {}
   if (view === "tasks") headerLabel = "Tasks";
 
@@ -892,7 +906,7 @@ async function renderCalendar() {
     </header>
     <section class="content">
       ${navTabs("home")}
-      <div class="viewseg">${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}${vseg("tasks", "Tasks")}</div>
+      <div class="viewseg">${vseg("schedule", "Schedule")}${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}${vseg("tasks", "Tasks")}</div>
       <div class="chips memberchips">${state.members.map((m) => `
         <button class="chip mchip${state.hiddenMembers.has(m.id) ? "" : " on"}" data-m="${m.id}">
           ${avatarHTML(m, "favatar")}${esc(m.name)}
@@ -933,10 +947,129 @@ async function renderCalendar() {
   const enBtn = document.getElementById("enableNotif"); if (enBtn) enBtn.onclick = enableReminders;
 
   const body = document.getElementById("calbody");
-  if (view === "day") renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue);
+  if (view === "schedule") renderScheduleBody(body, byDay, instances, mealsByDay, taskCellsByDay, choreCellsByDay);
+  else if (view === "day") {
+    renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue);
+    if (isWall()) addDaySidebar(body, byDay, mealsByDay, choreCellsByDay);
+  }
   else if (view === "week") renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay);
   else if (view === "tasks") renderTasksView(body);
   else renderMonthBody(body, weeks, byDay, todayKey, taskCellsByDay);
+}
+
+// W2 — Day gets a 280px wall sidebar: the next three items, tonight's dinner and the
+// chore fractions. Implemented as a wrapper so renderDayBody itself is untouched.
+function addDaySidebar(body, byDay, mealsByDay, choreCellsByDay) {
+  const key = dateKey(state.viewDay);
+  const next = (byDay[key] || []).filter((i) => !i.all_day)
+    .sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at))).slice(0, 3);
+  const dinner = (mealsByDay[key] || []).find((m) => m.meal_type === "Dinner") || (mealsByDay[key] || [])[0];
+  const chores = choreCellsByDay[key] || [];
+  const byMember = {};
+  for (const c of chores) {
+    const id = c.task.assigned_to || "_none";
+    const b = byMember[id] || (byMember[id] = { done: 0, total: 0 });
+    b.total++; if (c.done) b.done++;
+  }
+  const aside = document.createElement("aside");
+  aside.className = "dayside";
+  aside.innerHTML = `
+    <div class="dsblock"><h5>Next up</h5>${next.length ? next.map((i) => `
+      <div class="dsrow"><span class="dsdot" style="background:${inkOf(i.member_id)}"></span>
+        <span class="dsti">${esc(i.title)}</span><span class="dstm">${fmtTime(i.starts_at)}</span></div>`).join("")
+      : `<p class="empt">Nothing left today</p>`}</div>
+    <div class="dsblock"><h5>Dinner tonight</h5>
+      ${dinner ? `<div class="dsmeal">🍽️ ${esc(dinner.title)}</div>` : `<p class="empt">Not planned</p>`}</div>
+    <div class="dsblock"><h5>Chores</h5>${Object.keys(byMember).length ? Object.entries(byMember).map(([id, b]) => `
+      <div class="dsrow"><span class="dsdot" style="background:${id === "_none" ? "var(--slate)" : inkOf(id)}"></span>
+        <span class="dsti">${id === "_none" ? "Up for grabs" : esc(memberOf(id)?.name || "")}</span>
+        <span class="dstm">${b.done}/${b.total}</span></div>`).join("")
+      : `<p class="empt">None today</p>`}</div>`;
+  const wrap = document.createElement("div");
+  wrap.className = "daywrap";
+  while (body.firstChild) wrap.appendChild(body.firstChild);
+  body.appendChild(aside); body.appendChild(wrap);
+  body.classList.add("dayhaswide");
+}
+
+// ============================================================================
+// W2 — SCHEDULE: the wall's default and hero view.
+// ----------------------------------------------------------------------------
+// N day-columns starting on TODAY, each header / scrollable body / pinned footer.
+// The footer is the whole argument for this view: a kitchen asks "what's happening",
+// "what's for dinner" and "are the kids done", and nothing else answers all three
+// without a tap. Degrades on a phone to a scrolling day-sectioned agenda.
+// ============================================================================
+const scheduleCols = () => {
+  const n = parseInt(localStorage.getItem("fh_schedcols") || "5", 10);
+  return Math.min(7, Math.max(3, Number.isFinite(n) ? n : 5));
+};
+const memberOf = (id) => (id ? state.membersById[id] : null);
+const inkOf  = (id) => { const m = memberOf(id); return m ? colorFor(m.color) : ALL_COLOR; };
+const tintOf = (id) => { const m = memberOf(id); return m ? tintFor(m.color) : "#F1ECE3"; };
+const initialOf = (id) => { const m = memberOf(id); return m ? esc((m.name || "?").trim()[0]) : ""; };
+
+const evPill = (i) => `
+  <div class="sev" data-iid="${esc(i.iid)}" style="background:${tintOf(i.member_id)};border-left-color:${inkOf(i.member_id)}">
+    <span class="ti">${esc(i.title)}</span>
+    <span class="tm">${i.all_day ? "all day" : fmtTime(i.starts_at) + (i.ends_at ? `–${fmtTime(i.ends_at)}` : "")}</span>
+    ${i.member_id ? `<span class="who" style="background:${inkOf(i.member_id)}">${initialOf(i.member_id)}</span>` : ""}
+  </div>`;
+
+// Same pill, dashed and unfilled. That one difference separates "thing that happens"
+// from "thing someone must do" at four metres, with no legend.
+const chorePill = (c) => `
+  <div class="sev task${c.done ? " done" : ""}" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}"
+       style="border-left-color:${inkOf(c.task.assigned_to)}">
+    <span class="ti">${c.done ? "✓ " : "☐ "}${esc(c.task.title)}</span>
+    <span class="tm">${c.task.assigned_to ? esc(memberOf(c.task.assigned_to)?.name || "") : "Up for grabs"}${c.task.star_reward ? ` · ${c.task.star_reward}⭐` : ""}</span>
+  </div>`;
+
+function renderScheduleBody(body, byDay, instances, mealsByDay, taskCellsByDay, choreCellsByDay) {
+  const n = scheduleCols();
+  const todayKey = dateKey(new Date());
+  let html = "";
+  for (let i = 0; i < n; i++) {
+    const d = new Date(state.viewDay); d.setDate(d.getDate() + i);
+    const key = dateKey(d);
+    const isToday = key === todayKey;
+    const insts = (byDay[key] || []);
+    const allday = insts.filter((x) => x.all_day);
+    const timed = insts.filter((x) => !x.all_day)
+      .sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)));
+    const chores = (choreCellsByDay[key] || []);
+    const todos = (taskCellsByDay[key] || []);
+    const meals = (mealsByDay[key] || []);
+    const dinner = meals.find((m) => m.meal_type === "Dinner") || meals[0];
+    const done = chores.filter((c) => c.done).length;
+
+    const items = allday.map(evPill).join("") + timed.map(evPill).join("")
+      + todos.map(chorePill).join("") + chores.map(chorePill).join("");
+    html += `
+      <div class="scol${isToday ? " today" : ""}">
+        <div class="shd">
+          <div class="swd">${WD[(d.getDay() + 6) % 7]}</div>
+          <div class="dn">${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}
+            ${isToday ? `<span class="badge">TODAY</span>` : ""}</div>
+        </div>
+        <div class="sbody">${items || `<p class="empt">Nothing planned</p>`}</div>
+        <div class="sfoot">
+          <div class="r">🍽️ ${dinner ? `<b>${esc(dinner.title)}</b>` : `<span class="empt">no dinner planned</span>`}</div>
+          <div class="chores">${chores.length ? `Chores ${done} of ${chores.length} done` : "No chores"}</div>
+        </div>
+      </div>`;
+  }
+  body.innerHTML = `<div class="sched" style="--scols:${n}">${html}</div>`;
+
+  body.querySelectorAll(".sev:not(.task)").forEach((b) => {
+    b.onclick = () => {
+      const inst = instances.find((e) => e.iid === b.dataset.iid);
+      if (inst) openEventForm(inst);
+    };
+  });
+  body.querySelectorAll(".sev.task").forEach((b) => {
+    b.onclick = () => { state.choreMember = null; go("#/tasks"); };
+  });
 }
 
 // ---- day view: events + tasks; window starts at first item or 9am ----------
@@ -1082,13 +1215,17 @@ function renderMonthBody(body, weeks, byDay, todayKey, taskCellsByDay) {
         ${weeks.flat().map((d) => {
           const k = dateKey(d);
           const inMonth = d.getMonth() === state.viewMonth.getMonth();
-          const dots = (byDay[k] || []).slice(0, 4).map((ev) => {
-            const col = ev.member_id ? colorFor(state.membersById[ev.member_id]?.color) : ALL_COLOR;
-            return `<i class="evdot" style="background:${col}"></i>`;
-          }).join("");
+          const evs = byDay[k] || [];
+          // W2: restyle only. A 168px wall cell fits three named pills; a phone cell
+          // doesn't, so it keeps dots. Deliberately no further investment here —
+          // Month is a "when is the school trip" view, used monthly, not daily.
+          const marks = isWall()
+            ? evs.slice(0, 3).map((ev) => `<span class="mopill" style="background:${tintOf(ev.member_id)};border-left-color:${inkOf(ev.member_id)}">${esc(ev.title)}</span>`).join("")
+              + (evs.length > 3 ? `<span class="momore">+${evs.length - 3} more</span>` : "")
+            : evs.slice(0, 4).map((ev) => `<i class="evdot" style="background:${inkOf(ev.member_id)}"></i>`).join("");
           const hasTask = taskCellsByDay && taskCellsByDay[k] && taskCellsByDay[k].some((c) => !c.done);
           return `<button class="cal-cell${inMonth ? "" : " muted"}${k === todayKey ? " today" : ""}" data-key="${k}">
-            <span class="cal-num">${d.getDate()}</span><span class="cal-dots">${dots}${hasTask ? `<i class="taskdot"></i>` : ""}</span></button>`;
+            <span class="cal-num">${d.getDate()}</span><span class="cal-dots">${marks}${hasTask ? `<i class="taskdot"></i>` : ""}</span></button>`;
         }).join("")}
       </div>
     </div>`;
@@ -2705,7 +2842,7 @@ async function renderPlanSection(body) {
   const byDay = {}; for (const m of meals) (byDay[m.day] = byDay[m.day] || []).push(m);
   const todayKey = dateKey(new Date());
   body.innerHTML = `
-    <div class="card" style="margin:0">
+    <div class="card planweek" style="margin:0">
       <div class="mealhead"><strong>Next 7 days</strong><span class="sub" style="margin:0">Tap a day to add</span></div>
       <p class="sub" style="text-align:left;margin:2px 0 10px">Meals show up on the family calendar for that day. Tap a meal to edit it.</p>
       ${days.map((d) => { const k = dateKey(d); const dm = (byDay[k] || []); const wd = WD[(d.getDay() + 6) % 7];
