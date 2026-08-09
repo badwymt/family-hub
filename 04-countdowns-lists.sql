@@ -43,3 +43,26 @@ exception when duplicate_object then null; end $$;
 
 alter publication supabase_realtime add table lists;
 alter publication supabase_realtime add table list_items;
+
+-- ---- W8 security: revoke anon EXECUTE ---------------------------------------
+-- Postgres grants EXECUTE to PUBLIC by default, so "grant ... to authenticated"
+-- never actually excluded anon: every RPC was reachable unauthenticated via
+-- /rest/v1/rpc/. The PIN functions are family-scoped so anon got nothing useful,
+-- but complete_task / uncomplete_task / redeem_reward / set_redemption_status take
+-- raw uuids and would have acted on them. ping() stays anon-callable on purpose —
+-- the GitHub Actions keepalive hits it with the anon key.
+do $$
+declare f record;
+begin
+  for f in
+    select p.oid::regprocedure as sig
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname in ('complete_task','uncomplete_task','redeem_reward',
+                        'set_redemption_status','set_family_pin','verify_family_pin',
+                        'has_family_pin','current_family_id','rls_auto_enable')
+  loop
+    execute format('revoke all on function %s from public, anon', f.sig);
+    execute format('grant execute on function %s to authenticated', f.sig);
+  end loop;
+end $$;
