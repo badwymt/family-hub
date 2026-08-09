@@ -2409,7 +2409,14 @@ async function renderChoreMember() {
       if (!confirm(`Redeem "${r.title}" for ${r.star_cost} stars?`)) return;
       b.disabled = true;
       const { error } = await supabase.rpc("redeem_reward", { p_member: mid, p_reward: r.id });
-      if (error) { b.disabled = false; alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : error.message); return; }
+      if (error) {
+        b.disabled = false;
+        toast(/insufficient_stars/.test(error.message) ? "Not enough stars yet."
+          : /reward_free/.test(error.message) ? "That reward costs 0 stars — give it a price first."
+          : /too_many_pending/.test(error.message) ? "Already waiting for a grown-up on that one."
+          : error.message);
+        return;
+      }
       celebrate(); renderChores();
     };
   });
@@ -2579,7 +2586,10 @@ async function renderChoreWall() {
   // rewards strip: one card per kid + a parent action row for every pending redemption
   const kidCard = (m) => {
     const bal = balById[m.id] ?? 0;
-    const byCost = rewards.slice().sort((a, b) => a.star_cost - b.star_cost);
+    // a 0-star reward is infinitely redeemable (redeem_reward's gate is balance < cost);
+    // exclude it and tell the parent to price it rather than silently offering it
+    const free = rewards.filter((r) => (r.star_cost || 0) < 1);
+    const byCost = rewards.filter((r) => (r.star_cost || 0) >= 1).sort((a, b) => a.star_cost - b.star_cost);
     const affordable = byCost.filter((r) => bal >= r.star_cost);
     const best = affordable[affordable.length - 1] || null;      // the best they can have NOW
     const goal = byCost.find((r) => r.star_cost > bal) || null;   // the next thing to work towards
@@ -2590,7 +2600,7 @@ async function renderChoreWall() {
         <span class="rwnm">${esc(m.name)} · ${fmtStars(bal)}</span>
         <span class="rwnx">${shown
           ? `${esc(shown.emoji || "🎁")} ${esc(shown.title)} · ${shown.star_cost}⭐${goal && best ? ` · ${affordable.length} ready` : ""}`
-          : "no rewards yet"}</span>
+          : free.length ? `⚠️ ${esc(free[0].title)} costs 0⭐ — give it a price` : "no rewards yet"}</span>
         <span class="rwbar"><i style="width:${pct}%"></i></span>
       </span>
       ${best
@@ -2639,7 +2649,14 @@ async function renderChoreWall() {
       if (!(await requirePin("modify"))) return;             // the one irreversible action
       b.disabled = true;
       const { error } = await supabase.rpc("redeem_reward", { p_member: b.dataset.m, p_reward: b.dataset.red });
-      if (error) { b.disabled = false; alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : error.message); return; }
+      if (error) {
+        b.disabled = false;
+        toast(/insufficient_stars/.test(error.message) ? "Not enough stars yet."
+          : /reward_free/.test(error.message) ? "That reward costs 0 stars — give it a price first."
+          : /too_many_pending/.test(error.message) ? "Already waiting for a grown-up on that one."
+          : error.message);
+        return;
+      }
       celebrate(); renderChores();
     };
   });
@@ -3149,7 +3166,10 @@ async function renderKidMode() {
   if (rd) rd.onclick = async () => {
     if (!(await requirePin("modify"))) return;             // the one irreversible action
     const { error } = await supabase.rpc("redeem_reward", { p_member: mid, p_reward: rd.dataset.r });
-    if (error) return alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : error.message);
+    if (error) return toast(/insufficient_stars/.test(error.message) ? "Not enough stars yet."
+      : /reward_free/.test(error.message) ? "That reward costs 0 stars — ask a grown-up."
+      : /too_many_pending/.test(error.message) ? "Already waiting for a grown-up on that one."
+      : error.message);
     celebrate(); renderKidMode();
   };
 }
