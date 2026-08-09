@@ -214,16 +214,23 @@ async function render() {
     if (route.startsWith("#/home")) return needMember(viewCalendar);
     if (route.startsWith("#/tasks")) return needMember(viewTasks);
     if (route.startsWith("#/kid/")) return needMember(() => viewKidMode(route.slice(6)));
+    if (route.startsWith("#/countdowns")) return needMember(viewCountdowns);
+    if (route.startsWith("#/lists")) return kidBlocked(viewLists);
     if (route.startsWith("#/stars") || route.startsWith("#/rewards")) return go("#/tasks");
     if (route.startsWith("#/finance")) return kidBlocked(viewFinance);
     if (route.startsWith("#/meals")) return kidBlocked(viewMeals);
-    if (route.startsWith("#/family")) { const m = getMember(); if (m && m.is_child) return go("#/tasks"); return viewFamily(); }
+    if (route.startsWith("#/family")) {
+      const m = getMember(); if (m && m.is_child) return go("#/tasks");
+      return (async () => { if (!(await requirePin("modify"))) return go(isWall() ? "#/home" : "#/hub"); return viewFamily(); })();
+    }
     return viewPicker();
   } finally {
     rendering = false;
     ensureHomeFab();
     ensureWallShell();
     kioskIdleKick();
+    ambientArm();
+    sleepTick();
   }
 }
 
@@ -254,6 +261,12 @@ function kioskIdleKick() {
 ["pointerdown", "keydown", "wheel"].forEach((ev) =>
   window.addEventListener(ev, kioskIdleKick, { passive: true, capture: true })
 );
+// ambient shares the same activity signal; visibilitychange catches a kiosk tab swap
+["pointerdown", "keydown", "wheel"].forEach((ev) =>
+  window.addEventListener(ev, () => { if (typeof ambientArm === "function") ambientArm(); }, { passive: true, capture: true })
+);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && typeof wakeAmbient === "function") wakeAmbient(); });
+setInterval(() => { if (typeof sleepTick === "function") sleepTick(); }, 30000);
 
 // Persistent floating Home button: shown on the four section pages, hidden elsewhere.
 function ensureHomeFab() {
@@ -285,9 +298,9 @@ const RAIL_ITEMS = [
   { id: "cal",    route: "#/home",   icon: "🗓️", label: "Calendar" },
   { id: "chores", route: "#/tasks",  icon: "✅", label: "Chores" },
   { id: "meals",  route: "#/meals",  icon: "🍽️", label: "Meals" },
-  { id: "lists",  route: "#/lists",  icon: "📝", label: "Lists", soon: "W8" },
+  { id: "lists",  route: "#/lists",  icon: "📝", label: "Lists" },
   { id: "_spacer" },
-  { id: "sleep",  route: null,       icon: "🌙", label: "Sleep", soon: "W7" },
+  { id: "sleep",  route: "#sleep",   icon: "🌙", label: "Sleep" },
   { id: "set",    route: "#/family", icon: "⚙️", label: "Settings" },
 ];
 
@@ -330,6 +343,7 @@ function ensureWallShell() {
   const nameBefore = state.familyName;
   renderPeopleStrip().then(() => {
     if (state.familyName !== nameBefore) { renderRail(); renderInfoBar(); }
+    renderCountdownChip();
   });
 }
 
@@ -346,8 +360,14 @@ function renderRail() {
   document.querySelectorAll("#wallRail .navitem").forEach((b) => {
     // guard: an unrouted tap would fall through the router to the profile picker
     if (b.disabled || !b.dataset.r) return;
+    if (b.dataset.r === "#sleep") { b.onclick = () => { state._sleepSnooze = 0; sleepNow(); }; return; }
     b.onclick = () => go(b.dataset.r);
   });
+}
+
+function sleepNow() {
+  ensureAmbientNodes();
+  document.getElementById("sleepveil").classList.add("on");
 }
 
 function renderInfoBar() {
@@ -566,6 +586,24 @@ async function viewFamily() {
     <section class="content">
       <p class="sub" style="text-align:left;margin:0 0 16px">Edit names, colours and avatars. Changes show up everywhere.</p>
       <div id="memlist"></div>
+      <h4 class="lbh" style="margin-top:24px">🖥️ Display <span class="hint" style="display:inline;font-weight:400">this device only</span></h4>
+      <div class="setgrid" id="setgrid"></div>
+      <h4 class="lbh" style="margin-top:20px">🔒 Grown-up PIN</h4>
+      <div class="setgrid">
+        <label>Set / change PIN <span class="hint" style="display:inline">4 digits, blank to remove</span></label>
+        <div class="row" style="justify-content:flex-start;margin:0">
+          <input id="s_pin" inputmode="numeric" maxlength="4" placeholder="••••" style="max-width:120px" />
+          <button class="ghost" id="s_pinsave">Save PIN</button><span id="s_pinmsg" class="hint"></span>
+        </div>
+        <label>What the PIN guards</label>
+        <select id="s_pinscope">
+          <option value="modify">Changing and deleting things (recommended)</option>
+          <option value="add+modify">Adding things too</option>
+          <option value="off">Nothing — PIN off</option>
+        </select>
+        <label>Stay unlocked for</label>
+        <select id="s_pinwindow">${[1,2,5,10].map(n=>`<option value="${n}">${n} min</option>`).join("")}</select>
+      </div>
       <div class="row"><button class="link" id="toPicker">← Back to profiles</button></div>
     </section>`;
   document.getElementById("back").onclick = () => go("#/picker");
@@ -583,8 +621,64 @@ async function viewFamily() {
       <button class="ghost meminfo-edit" data-id="${m.id}">Edit</button>
     </div>`).join("") || `<p class="sub">No members yet.</p>`;
   list.querySelectorAll(".meminfo-edit").forEach((b) => {
-    b.onclick = () => openMemberForm(state.members.find((m) => m.id === b.dataset.id));
+    b.onclick = async () => {
+      if (!(await requirePin("modify"))) return;
+      openMemberForm(state.members.find((m) => m.id === b.dataset.id));
+    };
   });
+
+  // ---- W7 Display settings: all device-local, so the wall's roomy/large never
+  // fights a phone's snug/medium over the network.
+  const sel = (id, label, opts, cur) => `<label>${label}</label><select id="${id}">${
+    opts.map(([v, t]) => `<option value="${v}"${String(cur) === String(v) ? " selected" : ""}>${t}</option>`).join("")}</select>`;
+  const sleep = sleepCfg();
+  document.getElementById("setgrid").innerHTML =
+    sel("s_density", "Density", [["roomy","Roomy — wall"],["cozy","Cozy"],["snug","Snug — phone"]],
+        localStorage.getItem("fh_density") || (isWall() ? "roomy" : "snug")) +
+    sel("s_text", "Text size", [["s","Small"],["m","Medium"],["l","Large"]],
+        localStorage.getItem("fh_text") || (isWall() ? "l" : "m")) +
+    sel("s_cols", "Schedule columns", [3,4,5,6,7].map((n) => [n, `${n} days`]), scheduleCols()) +
+    sel("s_idle", "Screensaver after", [1,2,5,10,15].map((n) => [n, `${n} min`]),
+        localStorage.getItem("fh_idlemin") || 5) +
+    `<label class="inline"><input type="checkbox" id="s_sleepon" ${sleep.on ? "checked" : ""} /> Blank the screen overnight</label>
+     <div class="row" style="justify-content:flex-start;margin:0">
+       <input id="s_from" type="time" value="${esc(sleep.from)}" style="max-width:130px" />
+       <span class="hint">to</span>
+       <input id="s_to" type="time" value="${esc(sleep.to)}" style="max-width:130px" />
+     </div>`;
+
+  const bindLS = (id, key, after) => {
+    const n = document.getElementById(id);
+    n.onchange = () => { localStorage.setItem(key, n.value); if (after) after(); };
+  };
+  bindLS("s_density", "fh_density", applyDisplayPrefs);
+  bindLS("s_text", "fh_text", applyDisplayPrefs);
+  bindLS("s_cols", "fh_schedcols");
+  bindLS("s_idle", "fh_idlemin", ambientArm);
+  const saveSleep = () => {
+    localStorage.setItem("fh_sleep", JSON.stringify({
+      on: document.getElementById("s_sleepon").checked,
+      from: document.getElementById("s_from").value || "22:00",
+      to: document.getElementById("s_to").value || "06:00",
+    }));
+    state._sleepSnooze = 0; sleepTick();
+  };
+  ["s_sleepon", "s_from", "s_to"].forEach((id) => document.getElementById(id).onchange = saveSleep);
+
+  document.getElementById("s_pinscope").value = pinScope();
+  document.getElementById("s_pinwindow").value = String(Math.round(PIN_WINDOW_MS() / 60000));
+  bindLS("s_pinscope", "fh_pinscope");
+  bindLS("s_pinwindow", "fh_pinwindow");
+  document.getElementById("s_pinsave").onclick = async () => {
+    const v = document.getElementById("s_pin").value.trim();
+    const msg = document.getElementById("s_pinmsg");
+    if (v && !/^[0-9]{4}$/.test(v)) { msg.textContent = "Needs to be 4 digits."; return; }
+    if (await familyHasPin() && !(await requirePin("modify"))) return;   // changing a PIN needs the old one
+    const { error } = await supabase.rpc("set_family_pin", { p_pin: v || null });
+    msg.textContent = error ? error.message : (v ? "PIN saved." : "PIN removed.");
+    state._hasPin = undefined; state._pinUntil = 0;
+    document.getElementById("s_pin").value = "";
+  };
 }
 
 function openMemberForm(member) {
@@ -762,7 +856,7 @@ function expandSeries(ev, ovr, winStart, winEnd) {
 }
 
 // Read pipeline: singles in window + ALL recurring rows (expanded client-side).
-const EVENT_COLS = "id,title,location,member_id,starts_at,ends_at,all_day,rrule,exdates,reminder_minutes";
+const EVENT_COLS = "id,title,location,member_id,starts_at,ends_at,all_day,rrule,exdates,reminder_minutes,countdown,countdown_emoji";
 async function fetchInstances(winStart, winEnd, mode = "individual") {
   const me = state.member.id;
   // individual: this member + whole-family; combined: every member + whole-family
@@ -1124,8 +1218,8 @@ const tintOf = (id) => { const m = memberOf(id); return m ? tintFor(m.color) : "
 const initialOf = (id) => { const m = memberOf(id); return m ? esc((m.name || "?").trim()[0]) : ""; };
 
 const evPill = (i) => `
-  <div class="sev" data-iid="${esc(i.iid)}" style="background:${tintOf(i.member_id)};border-left-color:${inkOf(i.member_id)}">
-    <span class="ti">${esc(i.title)}</span>
+  <div class="sev${!i.all_day && i.ends_at && new Date(i.ends_at) < new Date() ? " past" : ""}" data-iid="${esc(i.iid)}" style="background:${tintOf(i.member_id)};border-left-color:${inkOf(i.member_id)}">
+    <span class="ti">${i.countdown ? `${esc(i.countdown_emoji || "⏳")} ` : ""}${esc(i.title)}${i.countdown ? ` <span class="cdd">${daysUntil(i.starts_at)}d</span>` : ""}</span>
     <span class="tm">${i.all_day ? "all day" : fmtTime(i.starts_at) + (i.ends_at ? `–${fmtTime(i.ends_at)}` : "")}</span>
     ${i.member_id ? `<span class="who" style="background:${inkOf(i.member_id)}">${initialOf(i.member_id)}</span>` : ""}
   </div>`;
@@ -1312,7 +1406,7 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
   const allday = days.map((d, i) => {
     const k = dateKey(d);
     const chips = (byDay[k] || []).filter((x) => x.all_day).map((x) =>
-      `<span class="adchip" data-iid="${esc(x.iid)}" style="background:${tintOf(x.member_id)};border-left:3px solid ${inkOf(x.member_id)}">${esc(x.title)}</span>`).join("");
+      `<span class="adchip" data-iid="${esc(x.iid)}" style="background:${tintOf(x.member_id)};border-left:3px solid ${inkOf(x.member_id)}">${x.countdown ? `${esc(x.countdown_emoji || "⏳")} ` : ""}${esc(x.title)}</span>`).join("");
     const meals = ((mealsByDay && mealsByDay[k]) || []).map((m) =>
       `<span class="adchip mealwk" data-mid="${esc(m.id)}" style="background:${MEAL_COLOR}">🍴 ${esc(m.title)}</span>`).join("");
     return `<div class="adcell${i >= 5 ? " wknd" : ""}">${chips}${meals}</div>`;
@@ -1349,7 +1443,8 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
       const top = (e._s - WK_START) * WK_ROW + 1;
       const height = Math.max(26, (e._e - e._s) * WK_ROW - 3);
       const leftPct = (ci / shown) * 100, widPct = (1 / shown) * 100;
-      blocks += `<div class="wev" data-iid="${esc(e.iid)}"
+      const isPast = e.ends_at ? new Date(e.ends_at) < new Date() : false;
+      blocks += `<div class="wev${isPast ? " past" : ""}" data-iid="${esc(e.iid)}"
         style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 3px);width:calc(${widPct}% - 6px);
                background:${tintOf(e.member_id)};border-left-color:${inkOf(e.member_id)}">
         <span class="wti">${esc(e.title)}</span><span class="wtm">${fmtTime(e.starts_at)}</span>
@@ -1645,6 +1740,13 @@ function openEventForm(inst, presetDayKey) {
         <label>Location</label>
         <input id="f_loc" placeholder="Optional" />
         <label class="inline"><input type="checkbox" id="f_allday" /> All day</label>
+        <div id="cdwrap">
+          <label class="inline"><input type="checkbox" id="f_cd" /> ⏳ Count down to this</label>
+          <div id="cdemojiwrap" style="display:none">
+            <label>Countdown emoji</label>
+            <input id="f_cdemoji" maxlength="4" placeholder="🏖️" />
+          </div>
+        </div>
         <div id="timed">
           <label>Start</label><input id="f_start" type="datetime-local" />
           <label>Ends</label>
@@ -1710,6 +1812,26 @@ function openEventForm(inst, presetDayKey) {
     $("allday").style.display = allDayCb.checked ? "" : "none";
   };
 
+  // ----- W6: countdown flag + auto-suggested emoji -----
+  const cdCb = $("f_cd"), cdEmoji = $("f_cdemoji");
+  cdCb.checked = !!(isEdit && (inst.countdown ?? base?.countdown));
+  cdEmoji.value = (isEdit && (inst.countdown_emoji ?? base?.countdown_emoji)) || "";
+  const syncCd = () => { $("cdemojiwrap").style.display = cdCb.checked ? "" : "none"; };
+  syncCd();
+  cdCb.onchange = () => {
+    syncCd();
+    if (cdCb.checked && !cdEmoji.value) cdEmoji.value = suggestCountdownEmoji($("f_title").value);
+  };
+  // a countdown to a past date is noise; hide the whole control for one
+  const hideCdIfPast = () => {
+    const iso = allDayCb.checked ? ($("f_date").value || "") : ($("f_start").value || "");
+    const past = iso && new Date(iso) < new Date(new Date().toDateString());
+    $("cdwrap").style.display = past ? "none" : "";
+  };
+  hideCdIfPast();
+  ["f_date", "f_start"].forEach((id) => { const n = $(id); if (n) n.addEventListener("change", hideCdIfPast); });
+  allDayCb.addEventListener("change", hideCdIfPast);
+
   // ----- end: pick an end time, or a duration -----
   let endMode = "time";
   const setEndMode = (m) => {
@@ -1767,7 +1889,8 @@ function openEventForm(inst, presetDayKey) {
         if (ends_at && ends_at < starts_at) return { err: "End is before start." };
       }
     }
-    return { title, member_id, location, starts_at, ends_at, all_day: isAllDay };
+    return { title, member_id, location, starts_at, ends_at, all_day: isAllDay,
+             countdown: cdCb.checked, countdown_emoji: cdCb.checked ? (cdEmoji.value.trim() || suggestCountdownEmoji(title)) : null };
   }
 
   $("evForm").addEventListener("submit", async (e) => {
@@ -2424,6 +2547,261 @@ function pickClaimant() {
 }
 
 // ============================================================================
+// W8 — LISTS. Groceries is a VIRTUAL card over the existing shopping_items so the
+// meal -> grocery loop keeps working and there is never a second competing list.
+// ============================================================================
+const fetchLists = () => supabase.from("lists").select("id,name,color,sort_order").order("sort_order");
+const fetchListItems = () => supabase.from("list_items").select("id,list_id,text,done,sort_order").order("sort_order");
+const createList = (p) => supabase.from("lists").insert({ family_id: state.familyId, ...p }).select().single();
+const createListItem = (p) => supabase.from("list_items").insert({ family_id: state.familyId, ...p }).select().single();
+const updateListItem = (id, p) => supabase.from("list_items").update(p).eq("id", id);
+const delListItem = (id) => supabase.from("list_items").delete().eq("id", id);
+
+async function viewLists() {
+  await loadContext();
+  await renderLists();
+  subscribeRealtime(["lists", "list_items", "shopping_items"], () => renderLists());
+}
+
+async function renderLists() {
+  let lists = [], items = [], groceries = [], err = "";
+  try {
+    const [l, i, g] = await Promise.all([fetchLists(), fetchListItems(), fetchShopping()]);
+    lists = l.data || []; items = i.data || []; groceries = g.data || [];
+  } catch (e) { err = e.message || String(e); }
+  state.hideDone = state.hideDone ?? false;
+
+  const card = (id, name, color, rows, virtual) => `
+    <div class="lcard" data-list="${esc(id)}">
+      <h4><span class="lsw" style="background:${colorFor(color)}"></span>${esc(name)}
+        ${virtual ? `<span class="hint" style="display:inline;margin-left:auto">from Meals</span>` : ""}</h4>
+      ${virtual ? "" : `<button class="laddbox" data-add="${esc(id)}">＋ Add item…</button>`}
+      ${rows.length ? rows.map((r) => `
+        <div class="li${r.done ? " done" : ""}" data-item="${esc(r.id)}" data-virtual="${virtual ? 1 : 0}">
+          <span class="litick">${r.done ? "✓" : ""}</span><span class="litx">${esc(r.text)}</span>
+        </div>`).join("") : `<p class="sub" style="margin:8px 0">Nothing here yet.</p>`}
+    </div>`;
+
+  const gRows = groceries.filter((g) => state.hideDone ? !g.got : true)
+    .map((g) => ({ id: g.id, text: g.name, done: !!g.got }));
+  const cards = card("__groceries", "🛒 Groceries", "green", gRows, true)
+    + lists.map((l) => card(l.id, l.name, l.color,
+        items.filter((i) => i.list_id === l.id && (state.hideDone ? !i.done : true)), false)).join("");
+
+  el.innerHTML = `
+    <header class="topbar"><h1>📝 Lists</h1><button id="addList">+ List</button></header>
+    <section class="content">
+      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <label class="inline" style="margin:0 0 10px"><input type="checkbox" id="hideDone" ${state.hideDone ? "checked" : ""} /> Hide completed</label>
+      <div class="lists">${cards}</div>
+    </section>`;
+
+  document.getElementById("hideDone").onchange = (e) => { state.hideDone = e.target.checked; renderLists(); };
+  document.getElementById("addList").onclick = async () => {
+    const name = prompt("New list name"); if (!name) return;
+    const { error } = await createList({ name: name.trim(), color: "slate", sort_order: lists.length });
+    if (error) return alert(error.message);
+    renderLists();
+  };
+  el.querySelectorAll("[data-add]").forEach((b) => b.onclick = async () => {
+    const t = prompt("Add item"); if (!t) return;
+    const { error } = await createListItem({ list_id: b.dataset.add, text: t.trim(), sort_order: Date.now() % 100000 });
+    if (error) return alert(error.message);
+    renderLists();
+  });
+  el.querySelectorAll(".li").forEach((r) => r.onclick = async () => {
+    const done = !r.classList.contains("done");
+    if (r.dataset.virtual === "1") await updateShopping(r.dataset.item, { got: done });
+    else await updateListItem(r.dataset.item, { done });
+    renderLists();
+  });
+}
+
+// ============================================================================
+// W7 — AMBIENT + SLEEP. What the panel displays for most of its life, so it gets
+// real design attention rather than being an afterthought.
+// ============================================================================
+const ambIdleMs = () => (parseInt(localStorage.getItem("fh_idlemin") || "5", 10) || 5) * 60000;
+const sleepCfg = () => {
+  try { return JSON.parse(localStorage.getItem("fh_sleep")) || { on: false, from: "22:00", to: "06:00" }; }
+  catch { return { on: false, from: "22:00", to: "06:00" }; }
+};
+const inSleepWindow = () => {
+  const c = sleepCfg(); if (!c.on) return false;
+  const n = new Date(), hm = `${pad(n.getHours())}:${pad(n.getMinutes())}`;
+  return c.from <= c.to ? (hm >= c.from && hm < c.to) : (hm >= c.from || hm < c.to);   // wraps midnight
+};
+
+// Skylight's one genuinely thoughtful detail is that their screensaver never fires
+// while a recipe is on screen. Generalised: someone reading a recipe — or a 5-year-old
+// deciding which chore to tap — is USING the screen even with no touches.
+const ambientBlocked = () =>
+  !!document.querySelector(".modal-overlay") || !!state.kidMode || !!document.querySelector(".sidepanel.open");
+
+function ensureAmbientNodes() {
+  if (!document.getElementById("ambient")) {
+    const a = document.createElement("div"); a.id = "ambient"; a.className = "ambient";
+    a.onclick = wakeAmbient; document.body.appendChild(a);
+  }
+  if (!document.getElementById("sleepveil")) {
+    const s = document.createElement("div"); s.id = "sleepveil"; s.className = "sleepveil";
+    s.onclick = () => { state._sleepSnooze = Date.now() + 120000; s.classList.remove("on"); };
+    document.body.appendChild(s);
+  }
+}
+
+async function showAmbient() {
+  if (!isWall() || ambientBlocked()) return ambientArm();
+  ensureAmbientNodes();
+  const a = document.getElementById("ambient");
+  const now = new Date();
+  const todayKey = dateKey(now);
+
+  let next = null, dinner = null, counts = {}, cd = null;
+  try {
+    const ws = new Date(now); ws.setHours(0, 0, 0, 0);
+    const we = new Date(ws); we.setDate(we.getDate() + 1);
+    const insts = await fetchInstances(ws, we, "combined");
+    next = insts.filter((i) => !i.all_day && new Date(i.starts_at) >= now)
+      .sort((x, y) => String(x.starts_at).localeCompare(String(y.starts_at)))[0] || null;
+    const mr = await fetchMealsRange(todayKey, todayKey);
+    const meals = mr.data || [];
+    dinner = meals.find((m) => m.meal_type === "Dinner") || meals[0] || null;
+    counts = await todayChoreCounts();
+    cd = (state.countdowns || await loadCountdowns())[0] || null;
+  } catch (_) { /* ambient must never be the thing that breaks */ }
+
+  const tot = Object.values(counts).reduce((s, c) => s + c.total, 0);
+  const dn = Object.values(counts).reduce((s, c) => s + c.done, 0);
+  const per = state.members.filter((m) => m.is_child).map((m) => {
+    const c = counts[m.id] || { done: 0, total: 0 };
+    return `${esc(m.name.split(" ")[0])} ${c.done}/${c.total}`;
+  }).join(" · ");
+
+  a.innerHTML = `
+    <div>
+      <div class="ambbig">${fmtClock(now).replace(/ (AM|PM)$/, "")}</div>
+      <div class="ambsub">${WD[(now.getDay() + 6) % 7]}, ${MONTHS[now.getMonth()]} ${now.getDate()}</div>
+    </div>
+    <div class="ambcards">
+      <div class="acard"><div class="k">Next up</div>
+        <div class="v">${next ? esc(next.title) : "Nothing else today"}</div>
+        <div class="m">${next ? `${fmtTime(next.starts_at)}${next.member_id ? " · " + esc(state.membersById[next.member_id]?.name || "") : ""}` : ""}</div></div>
+      <div class="acard"><div class="k">Dinner tonight</div>
+        <div class="v">${dinner ? "🍽️ " + esc(dinner.title) : "Not planned"}</div><div class="m"></div></div>
+      <div class="acard"><div class="k">Chores left</div>
+        <div class="v">${tot ? `${dn} of ${tot}` : "None today"}</div><div class="m">${per}</div></div>
+      <div class="acard"><div class="k">Countdown</div>
+        <div class="v">${cd ? `${esc(cd.countdown_emoji || "⏳")} ${esc(cd.title)}` : "—"}</div>
+        <div class="m">${cd ? `in ${daysUntil(cd.starts_at)} days` : ""}</div></div>
+    </div>
+    <div class="ambhint">Tap anywhere to wake</div>`;
+  a.classList.add("on");
+}
+
+function wakeAmbient() {
+  const a = document.getElementById("ambient");
+  if (a) a.classList.remove("on");
+  // the subscription may have gone stale while idle: re-fetch regardless
+  const h = location.hash || "";
+  if (h.startsWith("#/home")) renderCalendar();
+  else if (h.startsWith("#/tasks")) renderChores();
+  renderPeopleStrip(); renderCountdownChip();
+  ambientArm();
+}
+
+function ambientArm() {
+  clearTimeout(state._ambTimer);
+  if (!isWall()) return;
+  state._ambTimer = setTimeout(showAmbient, ambIdleMs());
+}
+
+function sleepTick() {
+  ensureAmbientNodes();
+  const veil = document.getElementById("sleepveil");
+  if (!veil) return;
+  const snoozed = state._sleepSnooze && Date.now() < state._sleepSnooze;
+  const want = isWall() && inSleepWindow() && !snoozed && !ambientBlocked();
+  veil.classList.toggle("on", !!want);
+}
+
+// ============================================================================
+// W6 — COUNTDOWNS. A flag on an existing event row: no new table, no new policy.
+// Days are computed client-side in the family timezone and NEVER stored.
+// ============================================================================
+const CD_HINTS = [
+  [/birthday|bday|turns \d/i, "🎂"], [/trip|beach|vacation|holiday|alex/i, "🏖️"],
+  [/school|term|class/i, "🎒"], [/flight|fly|airport|plane/i, "✈️"],
+  [/christmas|xmas/i, "🎄"], [/eid|ramadan/i, "🌙"], [/exam|test|quiz/i, "📝"],
+  [/wedding|marriage/i, "💒"], [/camp/i, "🏕️"], [/visit|grandma|grandpa|nana/i, "👵"],
+  [/move|moving|house/i, "🏠"], [/party/i, "🎉"], [/game|match|tournament/i, "⚽"],
+  [/dentist|doctor|hospital/i, "🩺"], [/concert|show/i, "🎵"], [/train/i, "🚆"],
+  [/car|drive|road/i, "🚗"], [/swim|pool/i, "🏊"], [/snow|ski/i, "⛷️"], [/baby/i, "👶"],
+];
+// A ~20-entry keyword map, deliberately not a model call: this has to work offline.
+function suggestCountdownEmoji(title) {
+  for (const [re, e] of CD_HINTS) if (re.test(title || "")) return e;
+  return "⏳";
+}
+// midnight-to-midnight in the family timezone, so "12 days" doesn't flip at 5pm
+function daysUntil(iso) {
+  const tz = state.familyTz || undefined;
+  const fmt = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  const a = new Date(fmt(new Date()) + "T00:00:00");
+  const b = new Date(fmt(new Date(iso)) + "T00:00:00");
+  return Math.round((b - a) / 86400000);
+}
+const fetchCountdowns = () => supabase.from("events")
+  .select("id,title,starts_at,countdown_emoji,member_id")
+  .eq("countdown", true).gte("starts_at", new Date(new Date().toDateString()).toISOString())
+  .order("starts_at", { ascending: true }).limit(12);
+
+async function loadCountdowns() {
+  try { const { data } = await fetchCountdowns(); state.countdowns = data || []; }
+  catch { state.countdowns = []; }
+  return state.countdowns;
+}
+
+async function renderCountdownChip() {
+  const slot = document.getElementById("wallCountdown");
+  if (!slot || !isWall()) return;
+  const cds = state.countdowns || await loadCountdowns();
+  if (!cds.length) { slot.innerHTML = ""; clearInterval(state._cdTimer); state._cdTimer = null; return; }
+  const paint = () => {
+    const c = cds[(state._cdIdx || 0) % cds.length];
+    const d = daysUntil(c.starts_at);
+    slot.innerHTML = `<button class="cdchip" id="cdChip">${esc(c.countdown_emoji || "⏳")} ${esc(c.title)}
+      <b>· ${d === 0 ? "today" : d === 1 ? "tomorrow" : d + " days"}</b></button>`;
+    document.getElementById("cdChip").onclick = () => go("#/countdowns");
+  };
+  paint();
+  clearInterval(state._cdTimer); state._cdTimer = null;
+  if (cds.length > 1) state._cdTimer = setInterval(() => {
+    if (!document.getElementById("wallCountdown")) { clearInterval(state._cdTimer); state._cdTimer = null; return; }
+    state._cdIdx = (state._cdIdx || 0) + 1; paint();
+  }, 8000);
+}
+
+async function viewCountdowns() {
+  await loadContext();
+  const cds = await loadCountdowns();
+  el.innerHTML = `
+    <header class="topbar"><button class="iconbtn" id="cdBack">‹</button><h1>⏳ Countdowns</h1><span style="width:36px"></span></header>
+    <section class="content">
+      <div class="cdgrid">${cds.length ? cds.map((c) => {
+        const d = daysUntil(c.starts_at);
+        const dt = new Date(c.starts_at);
+        return `<div class="cdcard">
+          <span class="cdemo">${esc(c.countdown_emoji || "⏳")}</span>
+          <span class="cdmeta"><b>${esc(c.title)}</b>
+            <span class="cdwhen">${WD[(dt.getDay() + 6) % 7]} ${dt.getDate()} ${MONTHS[dt.getMonth()].slice(0, 3)}</span></span>
+          <span class="cddays"><b>${d}</b><span>${d === 1 ? "day" : "days"}</span></span></div>`;
+      }).join("") : `<p class="sub">No countdowns yet. Tick "Count down to this" on any future event.</p>`}</div>
+    </section>`;
+  document.getElementById("cdBack").onclick = () => go(isWall() ? "#/home" : "#/hub");
+}
+
+// ============================================================================
 // W5 — KID MODE: the pre-reader takeover.
 // ----------------------------------------------------------------------------
 // Doma is 5 and cannot read a single word on this screen. Every product that served
@@ -2707,7 +3085,11 @@ async function subscribeRealtime(tables, onChange) {
   // W1: the people strip lives OUTSIDE #app, so render() never refreshes it. Wrapping
   // centrally means a chore completed on a phone moves the wall's bars, whatever view
   // happens to be open.
-  const wrapped = (payload) => { onChange(payload); if (isWall()) renderPeopleStrip(); };
+  const wrapped = (payload) => {
+    if (payload?.table === "events") { state.countdowns = null; renderCountdownChip(); }
+    onChange(payload);
+    if (isWall()) renderPeopleStrip();
+  };
   for (const t of tables) ch = ch.on("postgres_changes", { event: "*", schema: "public", table: t }, wrapped);
   state.channel = ch.subscribe();
 }

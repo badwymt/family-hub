@@ -5,7 +5,7 @@ const dk = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-
 const shift = (n) => { const d = new Date(today); d.setDate(d.getDate()+n); return d; };
 
 export const DB = {
-  families: [{ id:"fam1", name:"Badawy Family", tz:"America/Los_Angeles", auth_user_id:"u1" }],
+  families: [{ id:"fam1", name:"Badawy Family", tz:"UTC", auth_user_id:"u1" }],
   family_members: [
     { id:"m-dad",  family_id:"fam1", name:"Daddy 🥸", color:"teal",  avatar_url:null, is_child:false, star_balance:0,  sort_order:1 },
     { id:"m-suzy", family_id:"fam1", name:"Suzy 👩",  color:"red",   avatar_url:null, is_child:false, star_balance:0,  sort_order:2 },
@@ -28,6 +28,8 @@ export const DB = {
   events: [
     { id:"e1", family_id:"fam1", member_id:"m-suzy", title:"Pilates", location:null, starts_at:iso(new Date(today.getTime()+9*3600e3)),  ends_at:iso(new Date(today.getTime()+10*3600e3)), all_day:false, rrule:null, exdates:[], reminder_minutes:null },
     { id:"e2", family_id:"fam1", member_id:"m-nono", title:"Pep rally", location:null, starts_at:iso(new Date(today.getTime()+12*3600e3)), ends_at:iso(new Date(today.getTime()+13*3600e3)), all_day:false, rrule:null, exdates:[], reminder_minutes:null },
+    { id:"e4", family_id:"fam1", member_id:null, title:"Trip to Alex", location:null, starts_at:iso(shift(12)), ends_at:null, all_day:true, rrule:null, exdates:[], reminder_minutes:null, countdown:true, countdown_emoji:"🏖️" },
+    { id:"e5", family_id:"fam1", member_id:"m-nono", title:"Nono birthday", location:null, starts_at:iso(shift(28)), ends_at:null, all_day:true, rrule:null, exdates:[], reminder_minutes:null, countdown:true, countdown_emoji:"🎂" },
     { id:"e3", family_id:"fam1", member_id:null, title:"Zoo trip", location:null, starts_at:iso(shift(1)), ends_at:null, all_day:true, rrule:null, exdates:[], reminder_minutes:null },
   ],
   event_overrides: [], event_notes: [],
@@ -37,7 +39,21 @@ export const DB = {
     { id:"r-ice",  family_id:"fam1", title:"Ice cream", emoji:"🍦", star_cost:15, is_active:true },
   ],
   redemptions: [{ id:"rd1", family_id:"fam1", reward_id:"r-ice", member_id:"m-doma", star_cost:15, status:"pending", created_at:iso(today) }],
-  star_ledger: [], recurring_expenses: [], pantry_items: [], stores: [], shopping_items: [], push_subscriptions: [],
+  star_ledger: [], recurring_expenses: [], pantry_items: [], stores: [], push_subscriptions: [],
+  shopping_items: [
+    { id:"sh1", family_id:"fam1", name:"Milk (2)", store_id:null, got:false, critical:false, need_by:null, source_pantry_id:null },
+    { id:"sh2", family_id:"fam1", name:"Chicken thighs", store_id:null, got:false, critical:false, need_by:null, source_pantry_id:null },
+    { id:"sh3", family_id:"fam1", name:"Bananas", store_id:null, got:true, critical:false, need_by:null, source_pantry_id:null },
+  ],
+  lists: [
+    { id:"l-school", family_id:"fam1", name:"School", color:"blue", sort_order:0 },
+    { id:"l-house",  family_id:"fam1", name:"House",  color:"purple", sort_order:1 },
+  ],
+  list_items: [
+    { id:"li1", family_id:"fam1", list_id:"l-school", text:"Sign permission slip", done:false, sort_order:0 },
+    { id:"li2", family_id:"fam1", list_id:"l-school", text:"New gym shoes", done:true, sort_order:1 },
+    { id:"li3", family_id:"fam1", list_id:"l-house",  text:"AC filter", done:false, sort_order:0 },
+  ],
 };
 export const CALLS = { rpc: [] };
 
