@@ -7,10 +7,10 @@ const shift = (n) => { const d = new Date(today); d.setDate(d.getDate()+n); retu
 export const DB = {
   families: [{ id:"fam1", name:"Badawy Family", tz:"UTC", auth_user_id:"u1" }],
   family_members: [
-    { id:"m-dad",  family_id:"fam1", name:"Daddy 🥸", color:"teal",  avatar_url:null, is_child:false, star_balance:0,  sort_order:1 },
+    { id:"m-dad",  family_id:"fam1", name:"🥸 Daddy", color:"teal",  avatar_url:null, is_child:false, star_balance:0,  sort_order:1 },
     { id:"m-suzy", family_id:"fam1", name:"Suzy 👩",  color:"red",   avatar_url:null, is_child:false, star_balance:0,  sort_order:2 },
-    { id:"m-nono", family_id:"fam1", name:"Nono ⛹️",  color:"blue",  avatar_url:null, is_child:true,  star_balance:42, sort_order:3 },
-    { id:"m-doma", family_id:"fam1", name:"Doma ⛹️",  color:"green", avatar_url:null, is_child:true,  star_balance:18, sort_order:4 },
+    { id:"m-nono", family_id:"fam1", name:"Nono ⛹️‍♂️", color:"blue",  avatar_url:null, is_child:true,  star_balance:323811241, sort_order:3 },
+    { id:"m-doma", family_id:"fam1", name:"Doma ⛹️‍♂️", color:"green", avatar_url:null, is_child:true,  star_balance:18, sort_order:4 },
   ],
   tasks: [
     { id:"t-bed",   family_id:"fam1", assigned_to:"m-doma", title:"clean up bed", icon_url:"🛏️", time_band:"morning", star_reward:5, due_date:dk(shift(-3)), due_time:"08:00", kind:"chore", rrule:"FREQ=DAILY", exdates:[], is_active:true, created_at:iso(shift(-9)) },
@@ -38,7 +38,8 @@ export const DB = {
     { id:"r-game", family_id:"fam1", title:"Game hour", emoji:"🎮", star_cost:50, is_active:true },
     { id:"r-ice",  family_id:"fam1", title:"Ice cream", emoji:"🍦", star_cost:15, is_active:true },
   ],
-  redemptions: [{ id:"rd1", family_id:"fam1", reward_id:"r-ice", member_id:"m-doma", star_cost:15, status:"pending", created_at:iso(today) }],
+  redemptions: Array.from({length:8},(_,i)=>({ id:"rd"+i, family_id:"fam1", reward_id:i%2?"r-ice":"r-game",
+    member_id:i%2?"m-doma":"m-nono", star_cost:i%2?15:50, status:"pending", created_at:iso(today) })),
   star_ledger: [], recurring_expenses: [], pantry_items: [], stores: [], push_subscriptions: [],
   shopping_items: [
     { id:"sh1", family_id:"fam1", name:"Milk (2)", store_id:null, got:false, critical:false, need_by:null, source_pantry_id:null },

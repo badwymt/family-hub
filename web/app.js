@@ -13,11 +13,21 @@ const ALL_COLOR = "#B0A48F"; // whole-family events (warm taupe)
 const colorFor = (c) => COLORS[c] || "#8A8178";
 const tintFor  = (c) => TINTS[c] || "#EFEAE1";
 // avatar = emoji/initial stored in avatar_url (falls back to first letter of name)
+// W9: name[0] takes the first UTF-16 CODE UNIT, so "🥸 Daddy" yielded half a surrogate
+// pair and rendered as "?". Prefer the first letter/digit; fall back to the first whole
+// code point (Array.from splits by code point, not code unit).
+const avatarInitial = (name) => {
+  const n = String(name || "").trim();
+  const letter = n.match(/[\p{L}\p{N}]/u);
+  if (letter) return letter[0].toUpperCase();
+  const cp = Array.from(n)[0];
+  return cp || "?";
+};
 const avatarHTML = (m, cls = "avatar") => {
   const a = m.avatar_url;
   const inner = a
     ? (/^https?:\/\//.test(a) ? `<img src="${esc(a)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(a))
-    : esc(m.name?.[0] ?? "?");
+    : esc(avatarInitial(m.name));
   return `<span class="${cls}" style="background:${colorFor(m.color)}">${inner}</span>`;
 };
 const el = document.getElementById("app");
@@ -209,7 +219,11 @@ async function render() {
     const needMember = (fn) => { const m = getMember(); if (!m) return go("#/picker"); state.member = m; return fn(); };
     // W0.4: a kid profile can only reach Chores. UI gate, not a security boundary —
     // it's a kitchen wall. The real gate (PIN) lands in W4.
-    const kidBlocked = (fn) => needMember(() => (state.member.is_child ? go("#/tasks") : fn()));
+    const kidBlocked = (fn) => needMember(() => {
+      if (!state.member.is_child) return fn();
+      toast(`${state.member.name.split(" ")[0]} can only open Chores`);
+      return go("#/tasks");
+    });
     if (route.startsWith("#/hub")) return needMember(viewHub);
     if (route.startsWith("#/home")) return needMember(viewCalendar);
     if (route.startsWith("#/tasks")) return needMember(viewTasks);
@@ -220,9 +234,14 @@ async function render() {
     if (route.startsWith("#/finance")) return kidBlocked(viewFinance);
     if (route.startsWith("#/meals")) return kidBlocked(viewMeals);
     if (route.startsWith("#/family")) {
-      const m = getMember(); if (m && m.is_child) return go("#/tasks");
-      return (async () => { if (!(await requirePin("modify"))) return go(isWall() ? "#/home" : "#/hub"); return viewFamily(); })();
+      const m = getMember();
+      if (m && m.is_child && !isWall()) { toast("Ask a grown-up to open Settings"); return go("#/tasks"); }
+      return (async () => {
+        if (!(await requirePin("modify"))) { toast("Settings needs the grown-up PIN"); return go(isWall() ? "#/home" : "#/hub"); }
+        return viewFamily();
+      })();
     }
+    if (route.startsWith("#/picker")) return viewPicker();
     return viewPicker();
   } finally {
     rendering = false;
@@ -300,7 +319,8 @@ const RAIL_ITEMS = [
   { id: "meals",  route: "#/meals",  icon: "🍽️", label: "Meals" },
   { id: "lists",  route: "#/lists",  icon: "📝", label: "Lists" },
   { id: "_spacer" },
-  { id: "sleep",  route: "#sleep",   icon: "🌙", label: "Sleep" },
+  { id: "sleep",  route: "#sleep",   icon: "🌙", label: "Sleep",
+    hint: "Blank the screen now — tap anywhere to wake it" },
   { id: "set",    route: "#/family", icon: "⚙️", label: "Settings" },
 ];
 
@@ -354,7 +374,7 @@ function renderRail() {
     <div class="railbrand"><span class="rbm">${esc((state.familyName || "Family")[0] || "F")}</span></div>
     ${RAIL_ITEMS.map((it) => it.id === "_spacer" ? `<div class="railspacer"></div>` : `
       <button class="navitem${active(it) ? " on" : ""}${it.soon ? " soon" : ""}" data-r="${it.route || ""}"
-              ${it.soon ? `disabled title="Coming in ${it.soon}"` : ""}>
+              ${it.soon ? `disabled title="Coming in ${it.soon}"` : it.hint ? `title="${esc(it.hint)}"` : ""}>
         <span class="ico">${it.icon}</span>${esc(it.label)}
       </button>`).join("")}`;
   document.querySelectorAll("#wallRail .navitem").forEach((b) => {
@@ -367,7 +387,11 @@ function renderRail() {
 
 function sleepNow() {
   ensureAmbientNodes();
-  document.getElementById("sleepveil").classList.add("on");
+  const v = document.getElementById("sleepveil");
+  v.innerHTML = `<span class="sleephint">Tap anywhere to wake</span>`;
+  v.classList.add("on");
+  // the hint fades so the room isn't lit by it all night
+  setTimeout(() => v.classList.add("dark"), 4000);
 }
 
 function renderInfoBar() {
@@ -375,13 +399,19 @@ function renderInfoBar() {
   const onCal = h.startsWith("#/home");
   const view = state.calView || "day";
   const vseg = (v, label) => `<button class="seg${view === v ? " on" : ""}" data-v="${v}">${label}</button>`;
+  const me = state.member || getMember();
   document.getElementById("wallInfo").innerHTML = `
     <span class="famname">${esc(state.familyName || "Family Hub")}</span>
     <span class="wclock" id="wallClock">${fmtClock(new Date())}</span>
+    ${me ? `<button class="whochip" id="whoChip" title="Switch profile">
+        ${avatarHTML(me, "avatar xs")}<span>${esc(me.name)}</span><span class="whoswap">⇄</span>
+      </button>` : `<button class="whochip" id="whoChip" title="Choose a profile"><span>Who's this?</span></button>`}
     <span class="cdslot" id="wallCountdown"></span>
     <span class="ibspacer"></span>
     ${onCal ? `<span class="segs">${vseg("schedule", "Schedule")}${vseg("day", "Day")}${vseg("week", "Week")}${vseg("month", "Month")}</span>` : ""}
     ${onCal ? `<button class="ibtn" id="wallToday">Today</button>` : ""}`;
+  const who = document.getElementById("whoChip");
+  if (who) who.onclick = () => go("#/picker");
   if (onCal) {
     document.querySelectorAll("#wallInfo .seg").forEach((b) => {
       b.onclick = () => { state.calView = b.dataset.v; renderCalendar(); renderInfoBar(); };
@@ -541,6 +571,7 @@ async function viewPicker() {
         <p class="sub">Pick your profile</p>
         <div class="grid" id="tiles"><p class="sub">Loading…</p></div>
         <div style="text-align:center;margin-top:18px;display:flex;gap:14px;justify-content:center">
+          ${getMember() ? `<button class="link" id="pkCancel">← Back</button>` : ""}
           <button class="link" id="manage">⚙ Manage family</button>
           <button class="link" id="signout">Sign out</button>
         </div>
@@ -548,6 +579,8 @@ async function viewPicker() {
     </div>`;
   document.getElementById("signout").onclick = signOut;
   document.getElementById("manage").onclick = () => go("#/family");
+  const pkCancel = document.getElementById("pkCancel");
+  if (pkCancel) pkCancel.onclick = () => go(isWall() ? "#/home" : "#/hub");
 
   const { data, error } = await supabase
     .from("family_members")
@@ -566,7 +599,11 @@ async function viewPicker() {
       ${avatarHTML(m)}
       <span>${esc(m.name)}</span>
       <span class="role">${m.is_child ? "Kid" : "Parent"}</span>`;
-    b.onclick = () => { setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child, avatar_url: m.avatar_url }); syncSubscriptionMember(); go("#/hub"); };
+    b.onclick = () => {
+      setMember({ id: m.id, name: m.name, color: m.color, is_child: m.is_child, avatar_url: m.avatar_url });
+      syncSubscriptionMember();
+      go(isWall() ? "#/home" : "#/hub");
+    };
     tiles.appendChild(b);
   }
 }
@@ -1133,6 +1170,16 @@ function addDaySidebar(body, byDay, mealsByDay, choreCellsByDay) {
   body.classList.add("dayhaswide");
 }
 
+// W9 — nothing should ever fail silently. A tap that does nothing reads as "broken".
+function toast(msg) {
+  let t = document.getElementById("fhToast");
+  if (!t) { t = document.createElement("div"); t.id = "fhToast"; t.className = "fhtoast"; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add("on");
+  clearTimeout(state._toastT);
+  state._toastT = setTimeout(() => t.classList.remove("on"), 2600);
+}
+
 // ============================================================================
 // W4 — PIN gate.
 // ----------------------------------------------------------------------------
@@ -1212,10 +1259,18 @@ const scheduleCols = () => {
   const n = parseInt(localStorage.getItem("fh_schedcols") || "5", 10);
   return Math.min(7, Math.max(3, Number.isFinite(n) ? n : 5));
 };
+// 323,811,241 stars is real data in this family (a kid found the star-value field before
+// W4's PIN landed). Any balance can be absurd, so never render one raw into a chip.
+const fmtStars = (n) => {
+  const v = Number(n) || 0;
+  if (v < 10000) return `${v}⭐`;
+  if (v < 1e6) return `${Math.round(v / 1000)}k⭐`;
+  return `${(v / 1e6).toFixed(1)}M⭐`;
+};
 const memberOf = (id) => (id ? state.membersById[id] : null);
 const inkOf  = (id) => { const m = memberOf(id); return m ? colorFor(m.color) : ALL_COLOR; };
 const tintOf = (id) => { const m = memberOf(id); return m ? tintFor(m.color) : "#F1ECE3"; };
-const initialOf = (id) => { const m = memberOf(id); return m ? esc((m.name || "?").trim()[0]) : ""; };
+const initialOf = (id) => { const m = memberOf(id); return m ? esc(avatarInitial(m.name)) : ""; };
 
 const evPill = (i) => `
   <div class="sev${!i.all_day && i.ends_at && new Date(i.ends_at) < new Date() ? " past" : ""}" data-iid="${esc(i.iid)}" style="background:${tintOf(i.member_id)};border-left-color:${inkOf(i.member_id)}">
@@ -1329,7 +1384,7 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
     const leftPct = (ci / cols) * 100, widPct = (1 / cols) * 100;
     const rep = inst.isRecurring ? " 🔁" : "";
     const tm = `${fmtTime(inst.starts_at)}${inst.ends_at ? "–" + fmtTime(inst.ends_at) : ""}`;
-    const glyph = m ? (m.avatar_url && !/^https?:\/\//.test(m.avatar_url) ? esc(m.avatar_url) : esc((m.name[0] || "?"))) : "";
+    const glyph = m ? (m.avatar_url && !/^https?:\/\//.test(m.avatar_url) ? esc(m.avatar_url) : esc(avatarInitial(m.name))) : "";
     const badge = (m && cols < 2) ? `<span class="bav">${glyph}</span>` : "";
     return `<div class="evblock" data-iid="${esc(inst.iid)}" style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 3px);width:calc(${widPct}% - 6px);background:${col}">
       <div class="bt">${esc(inst.title)}${rep}</div><div class="btime">${tm}</div>${badge}</div>`;
@@ -2371,7 +2426,7 @@ const BANDS = [["morning", "☀️ Morning"], ["afternoon", "🌤️ Afternoon"]
 const bandOf = (t) => (t.time_band || (t.due_time ? (t.due_time < "12:00" ? "morning" : t.due_time < "17:00" ? "afternoon" : "evening") : null));
 const iconHTML = (t) => {
   const a = t.icon_url;
-  if (!a) return `<span class="cico">${t.star_reward ? "⭐" : "•"}</span>`;
+  if (!a) return `<span class="cico cico-none" aria-hidden="true"></span>`;
   return /^(https?:|data:)/.test(a)
     ? `<span class="cico"><img src="${esc(a)}" alt="" /></span>`
     : `<span class="cico">${esc(a)}</span>`;
@@ -2385,6 +2440,12 @@ function choreCooldown(key) {
 }
 
 async function renderChoreWall() {
+  // W9 — the wall DOES have an active profile (whoever last tapped a tile), and ignoring
+  // it was the bug: a kid saw and could tick the whole family's chores, undoing the W0.4
+  // gate. A kid now sees only their own column plus Up for grabs; a parent sees everyone
+  // with their own column first and marked.
+  const meId = state.member?.id || null;
+  const meIsKid = !!state.member?.is_child;
   const todayKey = dateKey(new Date());
   const ws = new Date(); ws.setHours(0, 0, 0, 0);
   const we = new Date(ws); we.setDate(we.getDate() + 1);
@@ -2415,8 +2476,12 @@ async function renderChoreWall() {
   state._choreRows = rows;
 
   const kids = state.members.filter((m) => m.is_child);
+  const ordered = meId
+    ? state.members.slice().sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : 0))
+    : state.members;
+  const visible = meIsKid ? ordered.filter((m) => m.id === meId) : ordered;
   const cols = [{ id: "", name: "🙋 Up for grabs", grab: true }]
-    .concat(state.members.map((m) => ({ id: m.id, m })));
+    .concat(visible.map((m) => ({ id: m.id, m })));
 
   const rowHTML = (r) => {
     const i = rows.indexOf(r);
@@ -2446,11 +2511,13 @@ async function renderChoreWall() {
     } else {
       inner = mine.length ? `<div class="cgroup">Today</div>${mine.map(rowHTML).join("")}` : `<p class="empt">Nothing today</p>`;
     }
+    const isMe = !c.grab && c.id === meId;
     const head = c.grab
       ? `<div class="chd"><span class="cnm">🙋 Up for grabs</span></div>`
-      : `<div class="chd">${avatarHTML(c.m, "avatar sm")}<span class="cnm">${esc(c.m.name)}</span>
-           ${c.m.is_child ? `<span class="cst">${balById[c.m.id] ?? 0}⭐</span>` : ""}</div>`;
-    return `<div class="ccol${c.grab ? " grab" : ""}" data-col="${c.id}">${head}<div class="cbody">${inner}</div></div>`;
+      : `<div class="chd">${avatarHTML(c.m, "avatar sm")}
+           <span class="cnm">${esc(c.m.name)}${isMe ? ` <span class="cme">you</span>` : ""}</span>
+           ${c.m.is_child ? `<span class="cst">${fmtStars(balById[c.m.id] ?? 0)}</span>` : ""}</div>`;
+    return `<div class="ccol${c.grab ? " grab" : ""}${isMe ? " me" : ""}" data-col="${c.id}">${head}<div class="cbody">${inner}</div></div>`;
   };
 
   // rewards strip: one card per kid + a parent action row for every pending redemption
@@ -2462,7 +2529,8 @@ async function renderChoreWall() {
     const pct = next ? Math.min(100, Math.round((bal / Math.max(1, next.star_cost)) * 100)) : 0;
     return `<div class="rwcard"><button class="rwav" data-kid="${m.id}" title="Open ${esc(m.name)}'s screen">${avatarHTML(m, "avatar sm")}</button>
       <span class="rwgoal">
-        <span class="rwnm">${esc(m.name)} · ${bal}⭐${next ? ` → ${esc(next.emoji || "🎁")} ${esc(next.title)} (${next.star_cost}⭐)` : ""}</span>
+        <span class="rwnm">${esc(m.name)} · ${fmtStars(bal)}</span>
+        <span class="rwnx">${next ? `${esc(next.emoji || "🎁")} ${esc(next.title)} · ${next.star_cost}⭐` : "no rewards yet"}</span>
         <span class="rwbar"><i style="width:${pct}%"></i></span>
       </span>
       ${next ? (afford
@@ -2470,12 +2538,10 @@ async function renderChoreWall() {
         : `<button class="rwgo off" disabled>${next.star_cost - bal} to go</button>`) : ""}
     </div>`;
   };
-  const pendHTML = pending.map((p) => {
-    const rw = rewardsById[p.reward_id], m = state.membersById[p.member_id];
-    return `<div class="rwpend">🎁 <b>${esc(m?.name || "")}</b> · ${esc(rw?.title || "Reward")} · ${p.star_cost}⭐
-      <button class="pfulfil" data-id="${p.id}">Fulfil</button>
-      <button class="pcancel" data-id="${p.id}">Cancel</button></div>`;
-  }).join("");
+  // One compact button, not N cards: eight pending redemptions used to run straight off
+  // the right edge of the strip. Parents open the queue deliberately.
+  const pendHTML = (!meIsKid && pending.length)
+    ? `<button class="rwqueue" id="rwQueue">🎁 <b>${pending.length}</b> waiting for a grown-up</button>` : "";
 
   el.innerHTML = `
     <header class="topbar"><h1>Chores</h1><span></span></header>
@@ -2521,8 +2587,34 @@ async function renderChoreWall() {
     if (error) return alert(error.message);
     renderChores();
   };
-  el.querySelectorAll(".pfulfil").forEach((b) => b.onclick = () => setRed(b.dataset.id, "fulfilled"));
-  el.querySelectorAll(".pcancel").forEach((b) => b.onclick = () => setRed(b.dataset.id, "rejected"));
+  const q = document.getElementById("rwQueue");
+  if (q) q.onclick = () => openRedemptionQueue(pending, rewardsById, setRed);
+}
+
+function openRedemptionQueue(pending, rewardsById, setRed) {
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay";
+  ov.innerHTML = `<form class="modal" id="rqForm">
+    <div class="modal-top"><button type="button" class="iconbtn" id="rqClose">✕</button>
+      <strong>🎁 Waiting for a grown-up</strong><span style="width:36px"></span></div>
+    <div class="modal-body">
+      ${pending.map((p) => {
+        const rw = rewardsById[p.reward_id], m = state.membersById[p.member_id];
+        return `<div class="rqrow">
+          ${m ? avatarHTML(m, "avatar sm") : ""}
+          <span class="rqtx"><b>${esc(m?.name || "")}</b><span>${esc(rw?.title || "Reward")} · ${p.star_cost}⭐</span></span>
+          <button type="button" class="pfulfil" data-id="${p.id}">Fulfil</button>
+          <button type="button" class="pcancel" data-id="${p.id}">Refund</button>
+        </div>`;
+      }).join("")}
+      <p class="hint">Refund returns the stars. Fulfil just marks it handed over.</p>
+    </div></form>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  document.getElementById("rqClose").onclick = close;
+  ov.querySelectorAll(".pfulfil").forEach((b) => b.onclick = async () => { close(); await setRed(b.dataset.id, "fulfilled"); });
+  ov.querySelectorAll(".pcancel").forEach((b) => b.onclick = async () => { close(); await setRed(b.dataset.id, "rejected"); });
 }
 
 // An identity-free wall has nobody to credit, so ask — one tap, four faces. This also
@@ -2645,7 +2737,7 @@ function ensureAmbientNodes() {
   }
   if (!document.getElementById("sleepveil")) {
     const s = document.createElement("div"); s.id = "sleepveil"; s.className = "sleepveil";
-    s.onclick = () => { state._sleepSnooze = Date.now() + 120000; s.classList.remove("on"); };
+      s.onclick = () => { state._sleepSnooze = Date.now() + 120000; s.classList.remove("on", "dark"); };
     document.body.appendChild(s);
   }
 }
