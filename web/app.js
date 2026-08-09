@@ -61,7 +61,9 @@ const QUEUE_KEY = "fh_queue";
 const queueGet = () => { try { return JSON.parse(localStorage.getItem(QUEUE_KEY)) || []; } catch { return []; } };
 const queueSet = (q) => localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
 function loadPending() {
-  state.pending = new Set(queueGet().filter((o) => o.type === "complete_task").map((o) => `${o.task_id}|${o.occurrence_date ?? ""}`));
+  const q = queueGet();
+  state.pending = new Set(q.filter((o) => o.type === "complete_task").map((o) => `${o.task_id}|${o.occurrence_date ?? ""}`));
+  state.undone  = new Set(q.filter((o) => o.type === "uncomplete_task").map((o) => `${o.task_id}|${o.occurrence_date ?? ""}`));
 }
 function enqueueCompletion(task, occ, earner) {
   const q = queueGet();
@@ -69,6 +71,24 @@ function enqueueCompletion(task, occ, earner) {
   queueSet(q);
   state.pending = state.pending || new Set();
   state.pending.add(`${task.id}|${occ ?? ""}`);
+}
+
+// W4.2 — real undo. Cancelling a still-queued complete is strictly better than sending
+// an undo for something the server never saw, so try that first; only queue an
+// uncomplete_task when the completion has actually landed.
+function enqueueUncomplete(task, occ, earner) {
+  const cell = `${task.id}|${occ ?? ""}`;
+  const q = queueGet();
+  const i = q.findIndex((o) => o.type === "complete_task" && o.task_id === task.id && (o.occurrence_date ?? null) === (occ ?? null));
+  if (i >= 0) {                       // never hit the network at all
+    q.splice(i, 1); queueSet(q);
+    state.pending = state.pending || new Set(); state.pending.delete(cell);
+    return "cancelled";
+  }
+  q.push({ type: "uncomplete_task", task_id: task.id, member_id: earner, occurrence_date: occ ?? null });
+  queueSet(q);
+  state.undone = state.undone || new Set(); state.undone.add(cell);
+  return "queued";
 }
 // W0.3: cancel a completion that is still queued locally (never sent to the server).
 // This is the only undo that is safe before the uncomplete_task RPC lands in W4 —
@@ -93,10 +113,11 @@ async function flushQueue() {
     while (q.length) {
       const op = q[0];
       let drop = true;
-      if (op.type === "complete_task") {
+      if (op.type === "complete_task" || op.type === "uncomplete_task") {
         try {
-          const { error } = await supabase.rpc("complete_task", { p_task: op.task_id, p_member: op.member_id, p_occurrence_date: op.occurrence_date });
-          // already_completed = the guard fired (idempotent replay) -> treat as done
+          const { error } = await supabase.rpc(op.type, { p_task: op.task_id, p_member: op.member_id, p_occurrence_date: op.occurrence_date });
+          // already_completed = the guard fired (idempotent replay) -> treat as done.
+          // uncomplete_task is idempotent by design (missing row -> no-op).
           if (error && !/already_completed/.test(error.message)) {
             if (/fetch|network|failed|timeout/i.test(error.message)) drop = false; // transient: keep + retry
             // else permanent (e.g. task deleted): drop it
@@ -105,7 +126,8 @@ async function flushQueue() {
       }
       if (!drop) break;
       q.shift(); queueSet(q);
-      state.pending?.delete(`${op.task_id}|${op.occurrence_date ?? ""}`);
+      const cell = `${op.task_id}|${op.occurrence_date ?? ""}`;
+      state.pending?.delete(cell); state.undone?.delete(cell);
     }
   } finally {
     flushing = false;
@@ -496,7 +518,7 @@ async function viewPicker() {
 
   const { data, error } = await supabase
     .from("family_members")
-    .select("id,name,color,is_child,avatar_url,sort_order")
+    .select("id,name,color,is_child,avatar_url,sort_order,chore_mode")
     .order("sort_order", { ascending: true });
 
   const tiles = document.getElementById("tiles");
@@ -622,7 +644,7 @@ async function loadContext() {
   state.familyId = fam?.id ?? null;
   state.familyName = fam?.name || "Family Hub";
   state.familyTz = fam?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const { data: mem } = await supabase.from("family_members").select("id,name,color,is_child,avatar_url,sort_order").order("sort_order");
+  const { data: mem } = await supabase.from("family_members").select("id,name,color,is_child,avatar_url,sort_order,chore_mode").order("sort_order");
   state.members = mem || [];
   state.membersById = Object.fromEntries(state.members.map((m) => [m.id, m]));
 }
@@ -993,6 +1015,73 @@ function addDaySidebar(body, byDay, mealsByDay, choreCellsByDay) {
   while (body.firstChild) wrap.appendChild(body.firstChild);
   body.appendChild(aside); body.appendChild(wrap);
   body.classList.add("dayhaswide");
+}
+
+// ============================================================================
+// W4 — PIN gate.
+// ----------------------------------------------------------------------------
+// Gates destructive and value-bearing actions ONLY. Adding is never gated: you want
+// the kids adding things, that's the point of a family screen. The hash lives in
+// family_settings, which has RLS and no policy at all — with one shared auth user a
+// readable hash is brute-forceable offline, so reads go through definer functions.
+// The unlock window is client-side on purpose: it's a nuisance barrier for a
+// 5-year-old, not a security boundary, and treating it as one is the mistake.
+// ============================================================================
+const PIN_WINDOW_MS = () => (parseInt(localStorage.getItem("fh_pinwindow") || "5", 10) || 5) * 60000;
+const pinScope = () => localStorage.getItem("fh_pinscope") || "modify";   // modify | add+modify | off
+
+async function familyHasPin() {
+  if (state._hasPin !== undefined) return state._hasPin;
+  try { const { data } = await supabase.rpc("has_family_pin"); state._hasPin = !!data; }
+  catch { state._hasPin = false; }
+  return state._hasPin;
+}
+
+// action: "modify" (delete/edit/redeem/settings) or "add"
+async function requirePin(action = "modify") {
+  const scope = pinScope();
+  if (scope === "off") return true;
+  if (action === "add" && scope !== "add+modify") return true;
+  if (!(await familyHasPin())) return true;                     // no PIN set => unlocked
+  if (state._pinUntil && Date.now() < state._pinUntil) return true;
+  return askPin();
+}
+
+function askPin() {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "modal-overlay pinov";
+    ov.innerHTML = `
+      <form class="modal pinmodal" id="pinForm">
+        <div class="modal-top"><button type="button" class="iconbtn" id="pClose">✕</button>
+          <strong>🔒 Grown-up PIN</strong><span style="width:36px"></span></div>
+        <div class="modal-body">
+          <p class="sub" style="margin:0 0 10px">Ask a parent to unlock this.</p>
+          <input id="p_pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"
+                 class="pininput" placeholder="••••" />
+          <div class="err" id="pErr"></div>
+        </div>
+      </form>`;
+    document.body.appendChild(ov);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.addEventListener("click", (e) => { if (e.target === ov) done(false); });
+    document.getElementById("pClose").onclick = () => done(false);
+    const inp = document.getElementById("p_pin");
+    setTimeout(() => inp.focus(), 30);
+    const submit = async () => {
+      const v = inp.value.trim();
+      if (!/^[0-9]{4}$/.test(v)) return;
+      const { data, error } = await supabase.rpc("verify_family_pin", { p_pin: v });
+      if (error || !data) {
+        document.getElementById("pErr").textContent = "Not quite — try again.";
+        inp.value = ""; inp.focus(); return;
+      }
+      state._pinUntil = Date.now() + PIN_WINDOW_MS();
+      done(true);
+    };
+    inp.oninput = () => { if (inp.value.length === 4) submit(); };
+    document.getElementById("pinForm").addEventListener("submit", (e) => { e.preventDefault(); submit(); });
+  });
 }
 
 // ============================================================================
@@ -1844,7 +1933,7 @@ function openTaskItemForm(task, occKey, presetDayKey) {
 
 // ---- tasks / chores data layer (M3 one-off + M4 recurrence; no stars yet) --
 const fetchTasks = () => supabase.from("tasks")
-  .select("id,title,description,assigned_to,star_reward,due_date,due_time,kind,rrule,exdates,is_active")
+  .select("id,title,description,assigned_to,star_reward,due_date,due_time,kind,rrule,exdates,is_active,icon_url,time_band")
   .eq("is_active", true)
   .order("due_date", { ascending: true, nullsFirst: false })
   .order("created_at", { ascending: true });
@@ -1899,7 +1988,10 @@ async function viewTasks() {
   await renderChores();
   subscribeRealtime(["tasks", "task_completions", "family_members", "rewards", "redemptions", "star_ledger"], () => renderChores());
 }
-async function renderChores() { return state.choreMember ? renderChoreMember() : renderChoreHome(); }
+async function renderChores() {
+  if (isWall() && !state.kidMode) return renderChoreWall();
+  return state.choreMember ? renderChoreMember() : renderChoreHome();
+}
 
 // W0.2: TODAY ONLY. The old -14/+28 window expanded one daily chore into 42 rows,
 // which is unreadable for anyone and actively harmful for a 5-year-old. Anything
@@ -2122,6 +2214,192 @@ async function renderChoreMember() {
   }).join("");
 }
 
+// ============================================================================
+// W4 — CHORES as a wall destination, with Rewards folded in as a top strip.
+// ----------------------------------------------------------------------------
+// "Up for grabs" leftmost, then one column per member. Kid columns group by routine
+// band; adults get a flat Today. TODAY ONLY — a backlog is for parents to triage,
+// never something a 5-year-old is shown. The whole 56px row is the tap target and it
+// TOGGLES; a 1.5s cooldown stops a double-tap flip-flop and rate-limits a rampage.
+// ============================================================================
+const BANDS = [["morning", "☀️ Morning"], ["afternoon", "🌤️ Afternoon"], ["evening", "🌙 Evening"]];
+const bandOf = (t) => (t.time_band || (t.due_time ? (t.due_time < "12:00" ? "morning" : t.due_time < "17:00" ? "afternoon" : "evening") : null));
+const iconHTML = (t) => {
+  const a = t.icon_url;
+  if (!a) return `<span class="cico">${t.star_reward ? "⭐" : "•"}</span>`;
+  return /^(https?:|data:)/.test(a)
+    ? `<span class="cico"><img src="${esc(a)}" alt="" /></span>`
+    : `<span class="cico">${esc(a)}</span>`;
+};
+
+function choreCooldown(key) {
+  state._cool = state._cool || {};
+  if (state._cool[key] && Date.now() < state._cool[key]) return true;
+  state._cool[key] = Date.now() + 1500;
+  return false;
+}
+
+async function renderChoreWall() {
+  const todayKey = dateKey(new Date());
+  const ws = new Date(); ws.setHours(0, 0, 0, 0);
+  const we = new Date(ws); we.setDate(we.getDate() + 1);
+
+  let chores = [], doneMap = new Set(), board = [], rewards = [], pending = [], err = "";
+  try {
+    const r = await fetchTasks(); if (r.error) throw r.error;
+    chores = (r.data || []).filter((t) => t.kind !== "task");
+    doneMap = await fetchDoneMap(chores.map((t) => t.id));
+    const [bd, rw, pr] = await Promise.all([fetchLeaderboard(), fetchRewards(), fetchPendingRedemptions()]);
+    if (bd.error) throw bd.error; if (rw.error) throw rw.error; if (pr.error) throw pr.error;
+    board = bd.data || []; rewards = rw.data || []; pending = pr.data || [];
+  } catch (e) { err = e.message || String(e); }
+  state.pending = state.pending || new Set(); state.undone = state.undone || new Set();
+
+  const balById = Object.fromEntries(board.map((m) => [m.id, m.star_balance]));
+  const rewardsById = Object.fromEntries(rewards.map((r) => [r.id, r]));
+  const isDone = (t, occ) => {
+    const cell = `${t.id}|${occ ?? ""}`;
+    if (state.undone.has(cell)) return false;
+    return doneMap.has(cell) || state.pending.has(cell);
+  };
+
+  // today's rows, grouped by owner ("" = up for grabs)
+  const rows = [];
+  for (const t of chores) for (const occ of todaysOccs(t, todayKey, ws, we))
+    rows.push({ task: t, occ, owner: t.assigned_to || "", done: isDone(t, occ) });
+  state._choreRows = rows;
+
+  const kids = state.members.filter((m) => m.is_child);
+  const cols = [{ id: "", name: "🙋 Up for grabs", grab: true }]
+    .concat(state.members.map((m) => ({ id: m.id, m })));
+
+  const rowHTML = (r) => {
+    const i = rows.indexOf(r);
+    return `<button class="citem${r.done ? " done" : ""}" data-i="${i}" aria-pressed="${r.done}">
+      <span class="ctick">${r.done ? "✓" : ""}</span>
+      ${iconHTML(r.task)}
+      <span class="clbl">${esc(r.task.title)}</span>
+      ${r.task.star_reward ? `<span class="cpts">${r.task.star_reward}⭐</span>` : ""}
+    </button>`;
+  };
+
+  const colHTML = (c) => {
+    const mine = rows.filter((r) => r.owner === c.id);
+    let inner = "";
+    if (c.grab) {
+      inner = mine.length ? mine.map(rowHTML).join("") : `<p class="empt">Nothing unclaimed</p>`;
+    } else if (c.m.is_child) {
+      const seen = new Set();
+      inner = BANDS.map(([b, label]) => {
+        const g = mine.filter((r) => bandOf(r.task) === b);
+        g.forEach((r) => seen.add(r));
+        return g.length ? `<div class="cgroup">${label}</div>${g.map(rowHTML).join("")}` : "";
+      }).join("");
+      const rest = mine.filter((r) => !seen.has(r));
+      if (rest.length) inner += `<div class="cgroup">Anytime</div>${rest.map(rowHTML).join("")}`;
+      if (!mine.length) inner = `<p class="empt">Nothing to do today 🎉</p>`;
+    } else {
+      inner = mine.length ? `<div class="cgroup">Today</div>${mine.map(rowHTML).join("")}` : `<p class="empt">Nothing today</p>`;
+    }
+    const head = c.grab
+      ? `<div class="chd"><span class="cnm">🙋 Up for grabs</span></div>`
+      : `<div class="chd">${avatarHTML(c.m, "avatar sm")}<span class="cnm">${esc(c.m.name)}</span>
+           ${c.m.is_child ? `<span class="cst">${balById[c.m.id] ?? 0}⭐</span>` : ""}</div>`;
+    return `<div class="ccol${c.grab ? " grab" : ""}" data-col="${c.id}">${head}<div class="cbody">${inner}</div></div>`;
+  };
+
+  // rewards strip: one card per kid + a parent action row for every pending redemption
+  const kidCard = (m) => {
+    const bal = balById[m.id] ?? 0;
+    const next = rewards.filter((r) => r.star_cost > bal).sort((a, b) => a.star_cost - b.star_cost)[0]
+      || rewards.slice().sort((a, b) => b.star_cost - a.star_cost)[0];
+    const afford = next && bal >= next.star_cost;
+    const pct = next ? Math.min(100, Math.round((bal / Math.max(1, next.star_cost)) * 100)) : 0;
+    return `<div class="rwcard">${avatarHTML(m, "avatar sm")}
+      <span class="rwgoal">
+        <span class="rwnm">${esc(m.name)} · ${bal}⭐${next ? ` → ${esc(next.emoji || "🎁")} ${esc(next.title)} (${next.star_cost}⭐)` : ""}</span>
+        <span class="rwbar"><i style="width:${pct}%"></i></span>
+      </span>
+      ${next ? (afford
+        ? `<button class="rwgo" data-red="${next.id}" data-m="${m.id}">Redeem</button>`
+        : `<button class="rwgo off" disabled>${next.star_cost - bal} to go</button>`) : ""}
+    </div>`;
+  };
+  const pendHTML = pending.map((p) => {
+    const rw = rewardsById[p.reward_id], m = state.membersById[p.member_id];
+    return `<div class="rwpend">🎁 <b>${esc(m?.name || "")}</b> · ${esc(rw?.title || "Reward")} · ${p.star_cost}⭐
+      <button class="pfulfil" data-id="${p.id}">Fulfil</button>
+      <button class="pcancel" data-id="${p.id}">Cancel</button></div>`;
+  }).join("");
+
+  el.innerHTML = `
+    <header class="topbar"><h1>Chores</h1><span></span></header>
+    <section class="content chorespane">
+      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <div class="rwstrip">${kids.map(kidCard).join("")}${pendHTML}</div>
+      <div class="ccols" style="--ccols:${cols.length}">${cols.map(colHTML).join("")}</div>
+    </section>`;
+
+  el.querySelectorAll(".citem").forEach((b) => {
+    b.onclick = async () => {
+      const r = rows[+b.dataset.i];
+      const cell = `${r.task.id}|${r.occ ?? ""}`;
+      if (choreCooldown(cell)) return;                       // anti flip-flop / rampage
+      if (r.done) {
+        enqueueUncomplete(r.task, r.occ, r.task.assigned_to || state.member.id);
+        renderChores(); flushQueue(); return;
+      }
+      let earner = r.task.assigned_to;
+      if (!earner) { earner = await pickClaimant(); if (!earner) return; }  // up for grabs
+      enqueueCompletion(r.task, r.occ, earner);
+      state.undone.delete(cell);
+      if (r.task.star_reward > 0) starBurst(r.task.star_reward);
+      const sibs = rows.filter((x) => x.owner === r.owner);
+      if (sibs.length && sibs.every((x) => x.done || x === r)) celebrate();
+      renderChores(); flushQueue();
+    };
+  });
+
+  el.querySelectorAll(".rwgo:not(.off)").forEach((b) => {
+    b.onclick = async () => {
+      if (!(await requirePin("modify"))) return;             // the one irreversible action
+      b.disabled = true;
+      const { error } = await supabase.rpc("redeem_reward", { p_member: b.dataset.m, p_reward: b.dataset.red });
+      if (error) { b.disabled = false; alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : error.message); return; }
+      celebrate(); renderChores();
+    };
+  });
+  const setRed = async (id, status) => {
+    if (!(await requirePin("modify"))) return;
+    const { error } = await supabase.rpc("set_redemption_status", { p_redemption: id, p_status: status });
+    if (error) return alert(error.message);
+    renderChores();
+  };
+  el.querySelectorAll(".pfulfil").forEach((b) => b.onclick = () => setRed(b.dataset.id, "fulfilled"));
+  el.querySelectorAll(".pcancel").forEach((b) => b.onclick = () => setRed(b.dataset.id, "rejected"));
+}
+
+// An identity-free wall has nobody to credit, so ask — one tap, four faces. This also
+// closes a latent bug: completeOcc fell back to task.assigned_to || state.member.id and
+// silently credited the wrong person for unassigned chores.
+function pickClaimant() {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "modal-overlay claimov";
+    ov.innerHTML = `<div class="modal claimmodal">
+      <div class="modal-top"><span style="width:36px"></span><strong>Who did it?</strong>
+        <button type="button" class="iconbtn" id="cClose">✕</button></div>
+      <div class="claimgrid">${state.members.map((m) => `
+        <button class="claimtile" data-m="${m.id}">${avatarHTML(m, "avatar")}<span>${esc(m.name)}</span></button>`).join("")}</div>
+    </div>`;
+    document.body.appendChild(ov);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.addEventListener("click", (e) => { if (e.target === ov) done(null); });
+    document.getElementById("cClose").onclick = () => done(null);
+    ov.querySelectorAll(".claimtile").forEach((b) => b.onclick = () => done(b.dataset.m));
+  });
+}
+
 // ---- Add / Edit task form --------------------------------------------------
 function openTaskForm(task) {
   const isEdit = !!task;
@@ -2148,6 +2426,16 @@ function openTaskForm(task) {
         <select id="t_who">${memberOpts}</select>
         <label>Due date${rui.freq !== "none" ? " (first occurrence)" : ""}</label>
         <input id="t_due" type="date" value="${esc(task?.due_date || "")}" />
+        <label>Icon <span class="hint" style="display:inline">emoji, or a photo URL — a photo of your own bed beats any glyph</span></label>
+        <input id="t_icon" maxlength="400" value="${esc(task?.icon_url || "")}" placeholder="🛏️  or  https://…/bed.jpg" />
+        <label>When</label>
+        <select id="t_band">
+          <option value=""${!task?.time_band ? " selected" : ""}>Anytime</option>
+          <option value="morning"${task?.time_band === "morning" ? " selected" : ""}>☀️ Morning</option>
+          <option value="afternoon"${task?.time_band === "afternoon" ? " selected" : ""}>🌤️ Afternoon</option>
+          <option value="evening"${task?.time_band === "evening" ? " selected" : ""}>🌙 Evening</option>
+        </select>
+        <p class="hint">A 5-year-old reads routine, not clock time. Bands drive Kid Mode.</p>
         <label>Star reward</label>
         <input id="t_star" type="number" min="0" step="1" value="${Number.isFinite(task?.star_reward) ? task.star_reward : 0}" />
         <p class="hint">Stars are awarded automatically when this chore is checked off.</p>
@@ -2175,8 +2463,12 @@ function openTaskForm(task) {
     const rrule = buildRuleString(readRecur());
     if (rrule && !due_date) { err.textContent = "Recurring tasks need a due date (first occurrence)."; return; }
 
+    // changing what a chore is worth is value-bearing: gate it
+    if (isEdit && star_reward !== task.star_reward && !(await requirePin("modify"))) return;
     const save = document.getElementById("tSave"); save.disabled = true; save.textContent = "Saving…";
-    const payload = { title, description, assigned_to, due_date, star_reward, rrule };
+    const icon_url = document.getElementById("t_icon").value.trim() || null;
+    const time_band = document.getElementById("t_band").value || null;
+    const payload = { title, description, assigned_to, due_date, star_reward, rrule, icon_url, time_band };
     const res = isEdit ? await updateTask(task.id, payload) : await createTask(payload);
     if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
     close();
@@ -2185,6 +2477,7 @@ function openTaskForm(task) {
 
   if (isEdit) {
     document.getElementById("tDelete").onclick = async () => {
+      if (!(await requirePin("modify"))) return;
       if (!confirm("Delete this task?")) return;
       const { error } = await deleteTask(task.id);
       if (error) { document.getElementById("tErr").textContent = error.message; return; }
@@ -2204,6 +2497,9 @@ const fetchRewards = () => supabase.from("rewards")
 const createReward = (p) => supabase.from("rewards").insert({ family_id: state.familyId, is_active: true, ...p }).select().single();
 const updateReward = (id, p) => supabase.from("rewards").update(p).eq("id", id).select().single();
 const deactivateReward = (id) => supabase.from("rewards").update({ is_active: false }).eq("id", id);
+const fetchPendingRedemptions = () => supabase.from("redemptions")
+  .select("id,reward_id,member_id,star_cost,status,created_at").eq("status", "pending")
+  .order("created_at", { ascending: true });
 const fetchRedemptions = (memberId) => supabase.from("redemptions")
   .select("id,reward_id,star_cost,status,created_at").eq("member_id", memberId)
   .order("created_at", { ascending: false }).limit(20);

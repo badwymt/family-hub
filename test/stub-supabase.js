@@ -13,12 +13,12 @@ export const DB = {
     { id:"m-doma", family_id:"fam1", name:"Doma ⛹️",  color:"green", avatar_url:null, is_child:true,  star_balance:18, sort_order:4 },
   ],
   tasks: [
-    { id:"t-bed",   family_id:"fam1", assigned_to:"m-doma", title:"clean up bed", star_reward:5, due_date:dk(shift(-3)), due_time:"08:00", kind:"chore", rrule:"FREQ=DAILY", exdates:[], is_active:true, created_at:iso(shift(-9)) },
-    { id:"t-teeth", family_id:"fam1", assigned_to:"m-doma", title:"brush teeth",  star_reward:5, due_date:dk(shift(-3)), due_time:"07:30", kind:"chore", rrule:"FREQ=DAILY", exdates:[], is_active:true, created_at:iso(shift(-9)) },
-    { id:"t-hw",    family_id:"fam1", assigned_to:"m-nono", title:"homework",     star_reward:10, due_date:dk(today), due_time:"16:00", kind:"chore", rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
-    { id:"t-toys",  family_id:"fam1", assigned_to:"m-nono", title:"tidy toys",    star_reward:5, due_date:dk(today), due_time:"19:00", kind:"chore", rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
+    { id:"t-bed",   family_id:"fam1", assigned_to:"m-doma", title:"clean up bed", icon_url:"🛏️", time_band:"morning", star_reward:5, due_date:dk(shift(-3)), due_time:"08:00", kind:"chore", rrule:"FREQ=DAILY", exdates:[], is_active:true, created_at:iso(shift(-9)) },
+    { id:"t-teeth", family_id:"fam1", assigned_to:"m-doma", title:"brush teeth",  icon_url:"🦷", time_band:"morning", star_reward:5, due_date:dk(shift(-3)), due_time:"07:30", kind:"chore", rrule:"FREQ=DAILY", exdates:[], is_active:true, created_at:iso(shift(-9)) },
+    { id:"t-hw",    family_id:"fam1", assigned_to:"m-nono", title:"homework",     icon_url:"📚", time_band:"afternoon", star_reward:10, due_date:dk(today), due_time:"16:00", kind:"chore", rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
+    { id:"t-toys",  family_id:"fam1", assigned_to:"m-nono", title:"tidy toys",    icon_url:"🧸", time_band:"evening", star_reward:5, due_date:dk(today), due_time:"19:00", kind:"chore", rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
     { id:"t-laun",  family_id:"fam1", assigned_to:"m-suzy", title:"laundry",      star_reward:0, due_date:dk(today), due_time:null, kind:"chore", rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
-    { id:"t-bins",  family_id:"fam1", assigned_to:null,     title:"take bins out",star_reward:5, due_date:dk(today), due_time:null, kind:"chore", rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
+    { id:"t-bins",  family_id:"fam1", assigned_to:null,     title:"take bins out",icon_url:"🚮", time_band:null, star_reward:5, due_date:dk(today), due_time:null, kind:"chore", rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
     { id:"t-perm",  family_id:"fam1", assigned_to:"m-suzy", title:"sign slip",    star_reward:0, due_date:dk(today), due_time:"09:00", kind:"task",  rrule:null, exdates:[], is_active:true, created_at:iso(shift(-1)) },
   ],
   task_completions: [
@@ -80,6 +80,7 @@ class Q {
     return Promise.resolve({ data, error }).then(res);
   }
 }
+if (typeof window !== 'undefined') { window.__DB = DB; window.__CALLS = CALLS; }
 export function createClient(){
   return {
     auth: {
@@ -89,7 +90,45 @@ export function createClient(){
       signOut: async () => ({ error:null }),
     },
     from: (t) => new Q(t),
-    rpc: async (name, args) => { CALLS.rpc.push({ name, args }); return { data:null, error:null }; },
+    rpc: async (name, args) => {
+      CALLS.rpc.push({ name, args });
+      const mem = (id) => DB.family_members.find(m=>m.id===id);
+      if (name==="has_family_pin") return { data: !!DB._pin, error:null };
+      if (name==="verify_family_pin") return { data: !DB._pin || args.p_pin===DB._pin, error:null };
+      if (name==="set_family_pin") { DB._pin = args.p_pin || null; return { data:null, error:null }; }
+      if (name==="complete_task") {
+        const t=DB.tasks.find(x=>x.id===args.p_task); const m=mem(args.p_member);
+        if(!t||!m) return {data:null,error:{message:"member_not_found"}};
+        const dup=DB.task_completions.find(c=>c.task_id===t.id&&(c.occurrence_date??null)===(args.p_occurrence_date??null));
+        if(dup) return {data:null,error:{message:"already_completed"}};
+        DB.task_completions.push({id:"c"+DB.task_completions.length,family_id:"fam1",task_id:t.id,member_id:m.id,occurrence_date:args.p_occurrence_date??null,star_awarded:t.star_reward,completed_at:new Date().toISOString()});
+        if(t.star_reward>0){ DB.star_ledger.push({member_id:m.id,delta:t.star_reward,reason:"chore"}); m.star_balance+=t.star_reward; }
+        return {data:null,error:null};
+      }
+      if (name==="uncomplete_task") {
+        const m=mem(args.p_member); if(!m) return {data:null,error:{message:"member_not_found"}};
+        const i=DB.task_completions.findIndex(c=>c.task_id===args.p_task&&c.member_id===m.id&&(c.occurrence_date??null)===(args.p_occurrence_date??null));
+        if(i<0) return {data:null,error:null};
+        const c=DB.task_completions[i]; DB.task_completions.splice(i,1);
+        const d=Math.min(c.star_awarded||0, Math.max(m.star_balance,0));
+        if(d>0){ DB.star_ledger.push({member_id:m.id,delta:-d,reason:"chore_undo"}); m.star_balance-=d; }
+        return {data:null,error:null};
+      }
+      if (name==="redeem_reward") {
+        const m=mem(args.p_member), r=DB.rewards.find(x=>x.id===args.p_reward);
+        if(m.star_balance<r.star_cost) return {data:null,error:{message:"insufficient_stars"}};
+        const red={id:"rd"+DB.redemptions.length,family_id:"fam1",reward_id:r.id,member_id:m.id,star_cost:r.star_cost,status:"pending",created_at:new Date().toISOString()};
+        DB.redemptions.push(red); DB.star_ledger.push({member_id:m.id,delta:-r.star_cost,reason:"reward"}); m.star_balance-=r.star_cost;
+        return {data:red,error:null};
+      }
+      if (name==="set_redemption_status") {
+        const r=DB.redemptions.find(x=>x.id===args.p_redemption); if(!r) return {data:null,error:{message:"redemption_not_found"}};
+        if(r.status==="rejected") return {data:null,error:{message:"already_refunded"}};
+        if(args.p_status==="rejected"){ const m=mem(r.member_id); DB.star_ledger.push({member_id:m.id,delta:r.star_cost,reason:"reward_refund"}); m.star_balance+=r.star_cost; }
+        r.status=args.p_status; return {data:r,error:null};
+      }
+      return { data:null, error:null };
+    },
     channel: () => { const ch={ on:()=>ch, subscribe:()=>ch }; return ch; },
     removeChannel: () => {},
     realtime: { setAuth(){} },

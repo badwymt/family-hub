@@ -697,3 +697,61 @@ button.finrow:hover{ border-color:var(--accent); }
   .wnow::before{ content:""; position:absolute; left:-4px; top:-5px; width:8px; height:8px;
     border-radius:50%; background:var(--accent); }
 }
+
+/* ==========================================================================
+   W4 — Chores destination + rewards strip + PIN
+   ========================================================================== */
+.pinmodal .pininput{ font-size:34px; letter-spacing:14px; text-align:center; padding:14px; }
+.claimmodal{ max-width:520px; }
+.claimgrid{ display:grid; grid-template-columns:repeat(2,1fr); gap:14px; padding:18px; }
+.claimtile{ background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:18px 12px;
+  display:flex; flex-direction:column; align-items:center; gap:10px; color:var(--text); font-weight:700;
+  min-height:120px; }
+.claimtile:hover{ border-color:var(--accent); }
+
+@media (min-width:1000px) and (orientation:landscape){
+  .chorespane{ display:flex; flex-direction:column; gap:10px; min-height:0; }
+  .rwstrip{ display:flex; gap:9px; align-items:center; overflow-x:auto; flex:0 0 auto; padding-bottom:2px; }
+  .rwcard{ display:flex; align-items:center; gap:9px; background:#fff; border:1px solid var(--line);
+    border-radius:13px; padding:7px 12px; min-width:300px; min-height:56px; }
+  .rwgoal{ flex:1; min-width:0; }
+  .rwnm{ display:block; font-size:11.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rwbar{ display:block; height:5px; border-radius:3px; background:#EDE5D8; margin-top:4px; overflow:hidden; }
+  .rwbar i{ display:block; height:100%; background:var(--star); border-radius:3px; }
+  .rwgo{ background:var(--star); color:#fff; font-size:12px; font-weight:800; border-radius:9px;
+    padding:9px 13px; min-height:44px; white-space:nowrap; }
+  .rwgo.off{ background:#EDE5D8; color:#A89B8A; }
+  .rwpend{ display:flex; align-items:center; gap:8px; background:#FFF6EC; border:1px solid #F2DCC2;
+    border-radius:13px; padding:7px 12px; font-size:12px; min-height:56px; white-space:nowrap; }
+  .rwpend button{ font-size:11.5px; font-weight:800; border-radius:8px; padding:8px 11px; min-height:44px; }
+  .pfulfil{ background:var(--pos); } .pcancel{ background:transparent; color:var(--danger); border:1px solid var(--line); }
+
+  .ccols{ flex:1; min-height:0; display:grid; grid-template-columns:repeat(var(--ccols,5),1fr); }
+  .ccol{ border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0; padding:0 8px; }
+  .ccol:first-child{ border-left:0; }
+  .ccol.grab{ background:#FAF5EC; }
+  .chd{ display:flex; align-items:center; gap:8px; padding:8px 2px 10px; }
+  .cnm{ font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cst{ margin-left:auto; font-size:12px; font-weight:800; color:var(--star); }
+  .cbody{ flex:1; overflow:auto; min-height:0; padding-bottom:8px; }
+  .cgroup{ font-size:10px; font-weight:800; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.6px; margin:10px 0 5px; }
+  /* ONE tap target per row, 56px = 21.3mm on this panel — the accessible-kiosk floor
+     and the minimum anything a child taps may be. */
+  .citem{ display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+    background:#fff; border:1px solid var(--line); border-radius:11px; padding:10px;
+    margin-bottom:6px; font-size:12.5px; min-height:56px; color:var(--text); }
+  .ccol.grab .citem{ border-style:dashed; }
+  .citem:hover{ border-color:var(--accent); }
+  .ctick{ width:24px; height:24px; border-radius:50%; border:2px solid var(--line); flex:0 0 24px;
+    display:grid; place-items:center; font-size:13px; color:#fff; pointer-events:none; }
+  /* done = three redundant signals: tick fills, icon dims, row recedes + strikes */
+  .citem.done{ opacity:.5; }
+  .citem.done .ctick{ background:var(--green); border-color:var(--green); }
+  .citem.done .clbl{ text-decoration:line-through; }
+  .citem.done .cico{ filter:grayscale(1); }
+  .cico{ font-size:18px; flex:0 0 auto; pointer-events:none; }
+  .cico img{ width:26px; height:26px; border-radius:6px; object-fit:cover; display:block; }
+  .clbl{ flex:1; font-weight:600; pointer-events:none; }
+  .cpts{ font-size:11px; font-weight:800; color:var(--star); pointer-events:none; }
+}
