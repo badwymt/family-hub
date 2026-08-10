@@ -341,6 +341,10 @@ button.finrow:hover{ border-color:var(--accent); }
 .adchip{ font-size:12px; color:#fff; padding:3px 10px; border-radius:999px; font-weight:600; cursor:pointer; }
 
 /* tab bar removed → reclaim the freed vertical space for the day grid */
+/* W15.8: on the wall the scroller is a FITTED box — calFit() sizes the hour rows to
+   it. .fitted means everything got in, so scrolling is off; without it the grid hit
+   the readability floor and scrolling is honest. */
+.dayscroll.fitted{ overflow-y:hidden; }
 .dayscroll{ max-height:calc(100dvh - 288px); min-height:320px; overflow-y:auto;
   border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); background:var(--panel); }
 .daygrid{ position:relative; background:var(--panel); }
@@ -630,7 +634,8 @@ button.finrow:hover{ border-color:var(--accent); }
   .sfoot{ margin-top:auto; }
 
   /* ---- Day: 280px sidebar beside the untouched hour grid ---- */
-  #calbody.dayhaswide{ display:grid; grid-template-columns:280px 1fr; gap:14px; align-items:start; }
+  #calbody.dayhaswide{ display:grid; grid-template-columns:280px 1fr; gap:14px;
+    align-items:stretch; min-height:0; }
   .dayside{ border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:12px; }
   .dsblock + .dsblock{ margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
   .dsblock h5{ margin:0 0 8px; font-size:10.5px; font-weight:800; color:var(--muted);
@@ -682,6 +687,11 @@ button.finrow:hover{ border-color:var(--accent); }
   .adchip{ display:block; font-size:10.5px; font-weight:700; border-radius:6px; padding:2px 6px;
     margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
   .wkscroll{ flex:1; overflow-y:auto; min-height:0; position:relative; }
+  .wkscroll.fitted{ overflow-y:hidden; }
+  /* the day view is a flex column on the wall so its scroller gets a real height to
+     divide, rather than the viewport-maths guess the max-height rule was making */
+  .dayhaswide .daywrap{ display:flex; flex-direction:column; min-height:0; }
+  .dayhaswide .daywrap .dayscroll{ flex:1; min-height:0; max-height:none; }
   .wkgrid{ display:grid; grid-template-columns:52px repeat(7,1fr); position:relative; padding-top:9px; }
   .wkgrid .hr{ height:56px; border-top:1px solid var(--line); position:relative; }
   .wkgut .hr{ border-top:1px solid var(--line); }
@@ -1202,24 +1212,14 @@ html.hastabs .modal{ padding-bottom:calc(env(safe-area-inset-bottom) + 8px); }
 .dhch{ font-size:11px; font-weight:800; color:var(--muted); margin-top:2px; }
 .dhch.all{ color:var(--pos); }
 
-.daychores{ background:var(--panel); border:1px solid var(--line); border-radius:14px;
-  padding:10px 12px; margin-bottom:10px; }
-.dchead{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-weight:800; font-size:14px; }
-.dchead .cbar{ flex:1 1 120px; min-width:120px; margin:0; }
-.dchead .cbnum{ font-weight:600; }
-.dcbands{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-.dcband{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-.dcbl{ font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase;
-  letter-spacing:.5px; min-width:96px; }
-.chorechip{ display:inline-flex; align-items:center; gap:6px; background:var(--panel2);
-  border:1px solid var(--line); border-left:4px solid var(--slate); border-radius:10px;
-  padding:6px 10px; font-size:13px; min-height:40px; cursor:pointer; }
-.chorechip.done{ opacity:.55; text-decoration:line-through; }
-.chorechip b{ font-size:11px; color:var(--muted); }
-.cck{ width:22px; height:22px; border-radius:6px; border:2px solid var(--line);
-  background:var(--panel); display:inline-grid; place-items:center; font-size:14px;
-  color:var(--pos); font-weight:900; flex:0 0 auto; }
-.chorechip.done .cck{ border-color:var(--pos); }
+/* Day's chore summary is the same component Schedule's footer uses — one bar, one
+   sentence, one per-person split. It is a button because the detail is one tap away. */
+.daychores{ display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  width:100%; text-align:left; background:var(--panel); border:1px solid var(--line);
+  border-radius:14px; padding:10px 14px; margin-bottom:10px; color:var(--text); }
+.dchl{ font-weight:800; font-size:14px; flex:0 0 auto; }
+.daychores .cbar{ flex:1 1 160px; min-width:140px; margin:0; }
+.daychores .cbnum{ flex:0 0 auto; font-size:13px; }
 
 /* Narrow phone: the header star board and the prize strip were saying the same
    thing, and between them they squeezed the child's own name down to "D…" and the

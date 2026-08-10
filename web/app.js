@@ -1178,6 +1178,44 @@ async function renderCalendar() {
   }
   else if (view === "tasks") renderTasksView(body);
   else renderMonthBody(body, weeks, byDay, todayKey, taskCellsByDay);
+  calFit(body);
+}
+
+// ============================================================================
+// W15.8 — FIT THE CALENDAR TO THE PANEL.
+// ----------------------------------------------------------------------------
+// Day and Week drew their hour grids at a fixed 56px per hour. Day spans 9am–11pm and
+// Week 7am–9pm, so both produced ~784px of grid inside a 720px panel: the wall always
+// scrolled, and on a screen nobody touches to scroll that means half the day simply
+// wasn't there. The hour height is now whatever divides the space actually available.
+//
+// This is a WALL/desktop behaviour. A phone keeps scrolling — squeezing fourteen hours
+// into 844px minus chrome would put the event titles below legibility, and the phone is
+// a surface you already scroll by reflex.
+//
+// The floor is 34px: an hour row shorter than that can't hold a title and a time, and a
+// grid you can't read is not better than one you scroll. If the day genuinely needs
+// more than fits, the scroller stays scrollable rather than lying about it.
+// ============================================================================
+const HOUR_ROW_FLOOR = 34;
+function calFit(body) {
+  if (!isWall()) return;
+  requestAnimationFrame(() => {
+    for (const sc of body.querySelectorAll(".dayscroll, .wkscroll")) {
+      const hours = +sc.dataset.hours;
+      if (!hours || typeof sc._refit !== "function") continue;
+      const avail = sc.clientHeight;
+      if (!avail) continue;
+      const px = Math.floor((avail - 2) / hours);
+      if (px >= HOUR_ROW_FLOOR) {
+        sc.classList.add("fitted");
+        sc._refit(px);
+      } else {
+        sc.classList.remove("fitted");
+        sc._refit(HOUR_ROW_FLOOR);        // as compact as stays readable, then scroll
+      }
+    }
+  });
 }
 
 // W2 — Day gets a 280px wall sidebar: the next three items, tonight's dinner and the
@@ -1432,20 +1470,39 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
   const dateTasks = dayTasks.filter((c) => !c.due_time);
   const od = isToday ? (overdue || []) : [];
 
-  // window: earlier of the first event/task or 9am; else 9am–11pm
+  // W15.8 — the window is the hours that HAVE something in them, plus an hour of air
+  // either side. The old rule forced 9am–11pm no matter what, so a day holding three
+  // things between 9 and 1 still reserved fourteen rows — eleven of them empty, and
+  // the grid overflowing the panel because of rows nobody needed to see.
   const allStarts = timed.map((i) => hourFloat(i.starts_at)).concat(timedTasks.map(taskHour));
   const allEnds = timed.map((i) => (i.ends_at ? hourFloat(i.ends_at) : hourFloat(i.starts_at) + 1)).concat(timedTasks.map((c) => taskHour(c) + 0.5));
   let startH, endH;
   if (allStarts.length) {
-    startH = Math.max(0, Math.min(9, Math.floor(Math.min(...allStarts))));
-    endH = Math.min(24, Math.max(23, Math.ceil(Math.max(...allEnds))));
-  } else { startH = 9; endH = 23; }
-
-  let rows = "";
-  for (let h = startH; h < endH; h++) {
-    const hr = (h % 12) || 12, ap = h < 12 ? "am" : "pm";
-    rows += `<div class="hourrow"><span class="hourlbl">${hr} ${ap}</span><div class="hourslot" data-h="${h}"></div></div>`;
+    startH = Math.max(0, Math.floor(Math.min(...allStarts)) - 1);
+    endH = Math.min(24, Math.ceil(Math.max(...allEnds)) + 1);
+  } else { startH = 8; endH = 20; }
+  // a floor of 8 hours: one 30-minute event should not become a full-screen band, and
+  // there has to be somewhere to tap to add something later in the day
+  if (endH - startH < 8) {
+    const grow = 8 - (endH - startH);
+    startH = Math.max(0, startH - Math.ceil(grow / 2));
+    endH = Math.min(24, Math.max(endH + Math.floor(grow / 2), startH + 8));
+    if (endH - startH < 8) startH = Math.max(0, endH - 8);
   }
+
+  // W15.8 — the hour scale is a VARIABLE now, not the constant 56. 9am–11pm at 56px
+  // is 784px of grid in a 720px panel, so the day view always scrolled and the events
+  // it exists to show fell below the fold. calFit() re-runs the builder below with the
+  // height that actually fits.
+  let hourPx = HOURPX;
+  const buildRows = () => {
+    let out = "";
+    for (let h = startH; h < endH; h++) {
+      const hr = (h % 12) || 12, ap = h < 12 ? "am" : "pm";
+      out += `<div class="hourrow" style="height:${hourPx}px"><span class="hourlbl">${hr} ${ap}</span><div class="hourslot" data-h="${h}"></div></div>`;
+    }
+    return out;
+  };
 
   // lay overlapping events into side-by-side columns
   timed.forEach((e) => { e._s = hourFloat(e.starts_at); e._e = e.ends_at ? hourFloat(e.ends_at) : e._s + 1; });
@@ -1458,13 +1515,17 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
   timed.forEach((e) => { if (cluster.length && e._s >= clusterEnd - 0.0001) { layout(cluster); cluster = []; clusterEnd = -1; } cluster.push(e); clusterEnd = Math.max(clusterEnd, e._e); });
   if (cluster.length) layout(cluster);
 
-  const blocks = timed.map((inst) => {
+  // W15.8 — timed to-dos used to be drawn full-width ON TOP of events, so a 9am task
+  // hid a 9am event completely. They get their own right-hand lane instead: a to-do is
+  // a checkbox, not a duration, so it doesn't need the width.
+  const taskLane = timedTasks.length ? 0.6 : 1;
+  const buildBlocks = () => timed.map((inst) => {
     const m = inst.member_id ? state.membersById[inst.member_id] : null;
     const col = m ? colorFor(m.color) : ALL_COLOR;
-    const top = (inst._s - startH) * HOURPX + 2;
-    const height = Math.max(22, (inst._e - inst._s) * HOURPX - 4);
+    const top = (inst._s - startH) * hourPx + 2;
+    const height = Math.max(20, (inst._e - inst._s) * hourPx - 4);
     const cols = inst._cols || 1, ci = inst._col || 0;
-    const leftPct = (ci / cols) * 100, widPct = (1 / cols) * 100;
+    const leftPct = (ci / cols) * 100 * taskLane, widPct = (1 / cols) * 100 * taskLane;
     const rep = inst.isRecurring ? " 🔁" : "";
     const tm = `${fmtTime(inst.starts_at)}${inst.ends_at ? "–" + fmtTime(inst.ends_at) : ""}`;
     const glyph = m ? (m.avatar_url && !/^https?:\/\//.test(m.avatar_url) ? esc(m.avatar_url) : esc(avatarInitial(m.name))) : "";
@@ -1473,19 +1534,22 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
       <div class="bt">${esc(inst.title)}${rep}</div><div class="btime">${tm}</div>${badge}</div>`;
   }).join("");
 
-  const taskBlocks = timedTasks.map((c) => {
+  const buildTaskBlocks = () => timedTasks.map((c) => {
     const m = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
     const col = m ? colorFor(m.color) : "#8A8178";
-    const top = (taskHour(c) - startH) * HOURPX + 2;
-    return `<div class="evblock taskblock${c.done ? " done" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}" style="top:${top}px;border-left-color:${col}">
+    const top = (taskHour(c) - startH) * hourPx + 2;
+    return `<div class="evblock taskblock${c.done ? " done" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}" style="top:${top}px;left:62%;width:calc(38% - 6px);height:${Math.max(20, Math.min(26, hourPx - 6))}px;border-left-color:${col}">
       <span class="tck" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}">${c.done ? "✓" : ""}</span><span class="tbt">${esc(c.task.title)} · ${c.due_time.slice(0, 5)}</span></div>`;
   }).join("");
 
-  let nowLine = "";
-  if (isToday) {
+  const buildNow = () => {
+    if (!isToday) return "";
     const nowH = hourFloat(new Date().toISOString());
-    if (nowH >= startH && nowH <= endH) nowLine = `<div class="nowline" style="top:${(nowH - startH) * HOURPX}px"></div>`;
-  }
+    return (nowH >= startH && nowH <= endH)
+      ? `<div class="nowline" style="top:${(nowH - startH) * hourPx}px"></div>` : "";
+  };
+  const buildGrid = () =>
+    `<div class="daygrid">${buildRows()}<div class="evlayer">${buildBlocks()}${buildTaskBlocks()}${buildNow()}</div></div>`;
 
   const taskChip = (c) => {
     const m = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
@@ -1493,24 +1557,14 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
     return `<span class="taskchip${c.done ? " done" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}" style="border-left-color:${col}"><span class="tck" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}">${c.done ? "✓" : ""}</span>${esc(c.task.title)}</span>`;
   };
 
-  // W15.5 — Day is the ONE view that keeps the full chore list, grouped by routine
-  // band so it reads the way the kids' board does rather than as a flat dump.
+  // W15.7 — Day reads exactly like Schedule: a TOTAL, not a list. mo's call after
+  // seeing it: twelve chore chips above the timeline pushed the events and tasks the
+  // day view exists for down the screen, which is the same crowding the pills caused
+  // in Schedule. Same component, same answer, both views.
   const choreStrip = dayChores.length ? `
-    <div class="daychores">
-      <!-- the per-person split lives in the Day sidebar; repeating it here is noise -->
-      <div class="dchead"><span>✅ Chores</span>${choreProgressHTML(dayChores, false)}</div>
-      <div class="dcbands">${BAND_ORDER.map((bk) => {
-        const g = dayChores.filter((c) => (bandOf(c.task) || "anytime") === bk);
-        if (!g.length) return "";
-        return `<div class="dcband"><span class="dcbl">${BAND_ICON[bk]} ${BAND_WORD[bk]}</span>${g.map((c) => {
-          const mm = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
-          return `<span class="chorechip${c.done ? " done" : ""}" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}"
-                        style="border-left-color:${mm ? colorFor(mm.color) : "var(--slate)"}">
-            <span class="cck" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}">${c.done ? "✓" : ""}</span>
-            ${esc(c.task.title)}${mm ? ` <b>${esc(avatarInitial(mm.name))}</b>` : ""}</span>`;
-        }).join("")}</div>`;
-      }).join("")}</div>
-    </div>` : "";
+    <button class="daychores" id="dayChoreBar">
+      <span class="dchl">✅ Chores</span>${choreProgressHTML(dayChores)}
+    </button>` : "";
 
   body.innerHTML = `
     ${choreStrip}
@@ -1522,32 +1576,31 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
       const m = i.member_id ? state.membersById[i.member_id] : null; const col = m ? colorFor(m.color) : ALL_COLOR;
       return `<span class="adchip" data-iid="${esc(i.iid)}" style="background:${col}">${esc(i.title)}</span>`;
     }).join("")}</div>` : ""}
-    <div class="dayscroll"><div class="daygrid">${rows}<div class="evlayer">${blocks}${taskBlocks}${nowLine}</div></div></div>`;
+    <div class="dayscroll">${buildGrid()}</div>`;
 
-  body.querySelectorAll(".evblock:not(.taskblock),.adchip").forEach((b) => {
-    b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
-  });
-  body.querySelectorAll(".mealchip").forEach((c) => { c.onclick = () => { const m = dayMeals.find((x) => x.id === c.dataset.mid); if (m) mealPlanForm(m, m.day, renderCalendar); else go("#/meals"); }; });
+  // hand calFit() everything it needs to redraw the grid at a height that fits
+  const scroller = body.querySelector(".dayscroll");
+  if (scroller) {
+    scroller.dataset.hours = String(endH - startH);
+    scroller._refit = (px) => { hourPx = px; scroller.innerHTML = buildGrid(); wireDay(); };
+  }
+
   const allCells = dayTasks.concat(od);
   const findCell = (id, occ) => allCells.find((c) => c.task.id === id && String(c.occ ?? "") === occ);
-  body.querySelectorAll(".tck").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const c = findCell(b.dataset.tid, b.dataset.occ); if (c && !c.done) { completeTaskCell(c); renderCalendar(); } }; });
-  body.querySelectorAll(".taskchip,.taskblock").forEach((b) => { b.onclick = () => { const c = findCell(b.dataset.tid, b.dataset.occ); if (c) openTaskItemForm(c.task, c.occ ?? null); }; });
-  const findChore = (id, occ) => dayChores.find((c) => c.task.id === id && String(c.occ ?? "") === occ);
-  body.querySelectorAll(".cck").forEach((b) => {
-    b.onclick = (e) => {
-      e.stopPropagation();
-      const c = findChore(b.dataset.tid, b.dataset.occ);
-      if (!c) return;
-      if (c.done) enqueueUncomplete(c.task, c.occ ?? null, c.task.assigned_to || state.member.id);
-      else completeTaskCell(c);
-      flushQueue(); renderCalendar();
-    };
-  });
-  body.querySelectorAll(".chorechip").forEach((b) => {
-    b.onclick = () => { const c = findChore(b.dataset.tid, b.dataset.occ); if (c) openTaskForm(c.task); };
-  });
-  const oc = document.getElementById("overdueChip"); if (oc) oc.onclick = () => { state.calView = "tasks"; renderCalendar(); };
-  body.querySelectorAll(".hourslot").forEach((s) => { s.onclick = () => openEventForm(null, dayKey); });
+  // one place that binds the day view, so a refit at a new hour scale rebinds it all
+  function wireDay() {
+    body.querySelectorAll(".evblock:not(.taskblock),.adchip").forEach((b) => {
+      b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
+    });
+    body.querySelectorAll(".mealchip").forEach((c) => { c.onclick = () => { const m = dayMeals.find((x) => x.id === c.dataset.mid); if (m) mealPlanForm(m, m.day, renderCalendar); else go("#/meals"); }; });
+    body.querySelectorAll(".tck").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const c = findCell(b.dataset.tid, b.dataset.occ); if (c && !c.done) { completeTaskCell(c); renderCalendar(); } }; });
+    body.querySelectorAll(".taskchip,.taskblock").forEach((b) => { b.onclick = () => { const c = findCell(b.dataset.tid, b.dataset.occ); if (c) openTaskItemForm(c.task, c.occ ?? null); }; });
+    const cb = document.getElementById("dayChoreBar");
+    if (cb) cb.onclick = () => { state.choreMember = null; go("#/tasks"); };
+    const oc = document.getElementById("overdueChip"); if (oc) oc.onclick = () => { state.calView = "tasks"; renderCalendar(); };
+    body.querySelectorAll(".hourslot").forEach((s) => { s.onclick = () => openEventForm(null, dayKey); });
+  }
+  wireDay();
 }
 
 // ---- week view: 7 day columns with event chips -----------------------------
@@ -1587,14 +1640,46 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
     return `<div class="adcell${i >= 5 ? " wknd" : ""}">${chips}${meals}</div>`;
   }).join("");
 
-  let gutter = "";
-  for (let h = WK_START; h <= WK_END; h++) {
-    const hr = (h % 12) || 12, ap = h < 12 ? "AM" : "PM";
-    gutter += `<div class="hr"><span class="hrt">${hr} ${ap}</span></div>`;
+  // W15.8 — same fix as the day view, twice over: 7am–9pm at 56px is 784px of grid in
+  // a 720px panel, so the week always scrolled and half of it was below the fold. The
+  // window is now the hours the WEEK actually uses, with an hour of air either side.
+  const wkStarts = [], wkEnds = [];
+  for (const d of days) {
+    const k = dateKey(d);
+    for (const e of (byDay[k] || [])) {
+      if (e.all_day) continue;
+      const st = hourFloat(e.starts_at);
+      wkStarts.push(st); wkEnds.push(e.ends_at ? hourFloat(e.ends_at) : st + 1);
+    }
+    for (const c of ((taskCellsByDay && taskCellsByDay[k]) || [])) {
+      if (!c.due_time) continue;
+      const p = c.due_time.split(":"); const th = (+p[0]) + ((+p[1]) || 0) / 60;
+      wkStarts.push(th); wkEnds.push(th + 0.5);
+    }
   }
+  let WK_S, WK_E;
+  if (wkStarts.length) {
+    WK_S = Math.max(0, Math.floor(Math.min(...wkStarts)) - 1);
+    WK_E = Math.min(24, Math.ceil(Math.max(...wkEnds)) + 1);
+  } else { WK_S = 8; WK_E = 20; }
+  if (WK_E - WK_S < 8) {
+    const grow = 8 - (WK_E - WK_S);
+    WK_S = Math.max(0, WK_S - Math.ceil(grow / 2));
+    WK_E = Math.min(24, Math.max(WK_E + Math.floor(grow / 2), WK_S + 8));
+    if (WK_E - WK_S < 8) WK_S = Math.max(0, WK_E - 8);
+  }
+  let wkRow = WK_ROW;
+  const buildGutter = () => {
+    let out = "";
+    for (let h = WK_S; h <= WK_E; h++) {
+      const hr = (h % 12) || 12, ap = h < 12 ? "AM" : "PM";
+      out += `<div class="hr" style="height:${wkRow}px"><span class="hrt">${hr} ${ap}</span></div>`;
+    }
+    return out;
+  };
 
   const nowH = hourFloat(new Date().toISOString());
-  const cols = days.map((d, di) => {
+  const buildCols = () => days.map((d, di) => {
     const k = dateKey(d), isToday = k === todayKey;
     const timed = (byDay[k] || []).filter((x) => !x.all_day);
     timed.forEach((e) => { e._s = hourFloat(e.starts_at); e._e = e.ends_at ? hourFloat(e.ends_at) : e._s + 1; });
@@ -1609,15 +1694,25 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
     timed.forEach((e) => { if (cluster.length && e._s >= cEnd - 1e-4) { layout(cluster); cluster = []; cEnd = -1; } cluster.push(e); cEnd = Math.max(cEnd, e._e); });
     if (cluster.length) layout(cluster);
 
+    // computed BEFORE the event loop, which reads it: a to-do sharing the column
+    // pushes events into a 60% lane so nothing is drawn on top of anything
+    const dayCells = ((taskCellsByDay && taskCellsByDay[k]) || []);
+    const hasTimedTask = dayCells.some((c) => {
+      if (!c.due_time) return false;
+      const p = c.due_time.split(":"); const th = (+p[0]) + ((+p[1]) || 0) / 60;
+      return th >= WK_S && th <= WK_E;
+    });
+
     let blocks = "", hidden = 0;
     for (const e of timed) {
       const n = e._cols || 1, ci = e._col || 0;
       // 3+ overlaps: show two, collapse the rest to a +N chip rather than hiding them
       if (n >= 3 && ci >= 2) { hidden++; continue; }
       const shown = n >= 3 ? 2 : n;
-      const top = (e._s - WK_START) * WK_ROW + 1;
-      const height = Math.max(26, (e._e - e._s) * WK_ROW - 3);
-      const leftPct = (ci / shown) * 100, widPct = (1 / shown) * 100;
+      const lane = hasTimedTask ? 0.6 : 1;
+      const top = (e._s - WK_S) * wkRow + 1;
+      const height = Math.max(22, (e._e - e._s) * wkRow - 3);
+      const leftPct = (ci / shown) * 100 * lane, widPct = (1 / shown) * 100 * lane;
       const isPast = e.ends_at ? new Date(e.ends_at) < new Date() : false;
       blocks += `<div class="wev${isPast ? " past" : ""}" data-iid="${esc(e.iid)}"
         style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 3px);width:calc(${widPct}% - 6px);
@@ -1628,19 +1723,19 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
     if (hidden) blocks += `<div class="wmore" data-k="${k}">+${hidden}</div>`;
 
     // calendar to-dos only — a chore's number lives in the day header (W15.5)
-    const cells = ((taskCellsByDay && taskCellsByDay[k]) || []);
+    const cells = dayCells;
     for (const c of cells) {
       if (!c.due_time) continue;
       const p = c.due_time.split(":"); const th = (+p[0]) + ((+p[1]) || 0) / 60;
-      if (th < WK_START || th > WK_END) continue;
+      if (th < WK_S || th > WK_E) continue;
       blocks += `<div class="wev wtask${c.done ? " done" : ""}" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}"
-        style="top:${(th - WK_START) * WK_ROW + 1}px;height:26px;border-left-color:${inkOf(c.task.assigned_to)}">
+        style="top:${(th - WK_S) * wkRow + 1}px;left:62%;width:calc(38% - 5px);height:${Math.max(18, Math.min(26, wkRow - 4))}px;border-left-color:${inkOf(c.task.assigned_to)}">
         <span class="wti">${c.done ? "✓" : "☐"} ${esc(c.task.title)}</span></div>`;
     }
 
-    let rows = ""; for (let h = WK_START; h <= WK_END; h++) rows += `<div class="hr"></div>`;
-    const nl = (isToday && nowH >= WK_START && nowH <= WK_END)
-      ? `<div class="wnow" style="top:${(nowH - WK_START) * WK_ROW}px"></div>` : "";
+    let rows = ""; for (let h = WK_S; h <= WK_E; h++) rows += `<div class="hr" style="height:${wkRow}px"></div>`;
+    const nl = (isToday && nowH >= WK_S && nowH <= WK_E)
+      ? `<div class="wnow" style="top:${(nowH - WK_S) * wkRow}px"></div>` : "";
     return `<div class="wcol${di >= 5 ? " wknd" : ""}">${rows}${blocks}${nl}</div>`;
   }).join("");
 
@@ -1648,29 +1743,39 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
     <div class="wk">
       <div class="wkhead"><div class="wkgut"></div>${head}</div>
       <div class="wkallday"><div class="wkgut lbl">all-day</div>${allday}</div>
-      <div class="wkscroll" id="wkscroll"><div class="wkgrid"><div class="wkgut">${gutter}</div>${cols}</div></div>
+      <div class="wkscroll" id="wkscroll"><div class="wkgrid"><div class="wkgut">${buildGutter()}</div>${buildCols()}</div></div>
     </div>`;
 
   const sc = document.getElementById("wkscroll");
-  if (sc) sc.scrollTop = (8 - WK_START) * WK_ROW;
-
-  body.querySelectorAll(".wev:not(.wtask), .adchip:not(.mealwk)").forEach((b) => {
-    b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
-  });
-  body.querySelectorAll(".wtask").forEach((b) => {
-    b.onclick = () => {
-      const all = Object.values(taskCellsByDay || {}).flat().concat(Object.values(choreCellsByDay || {}).flat());
-      const c = all.find((x) => x.task.id === b.dataset.tid && String(x.occ ?? "") === b.dataset.occ);
-      if (!c) return;
-      if (c.task.kind === "task") openTaskItemForm(c.task, c.occ ?? null); else { state.choreMember = null; go("#/tasks"); }
+  if (sc) {
+    sc.dataset.hours = String(WK_E - WK_S + 1);
+    sc._refit = (px) => {
+      wkRow = px;
+      sc.innerHTML = `<div class="wkgrid"><div class="wkgut">${buildGutter()}</div>${buildCols()}</div>`;
+      wireWeek();
     };
-  });
-  body.querySelectorAll(".mealwk").forEach((b) => {
-    b.onclick = (e) => { e.stopPropagation(); go("#/meals"); };
-  });
-  body.querySelectorAll(".dh, .wmore").forEach((h) => {
-    h.onclick = () => { state.viewDay = new Date(h.dataset.k + "T00:00"); state.calView = "day"; renderCalendar(); };
-  });
+  }
+
+  function wireWeek() {
+    body.querySelectorAll(".wev:not(.wtask), .adchip:not(.mealwk)").forEach((b) => {
+      b.onclick = () => { const inst = instances.find((e) => e.iid === b.dataset.iid); if (inst) openEventForm(inst); };
+    });
+    body.querySelectorAll(".wtask").forEach((b) => {
+      b.onclick = () => {
+        const all = Object.values(taskCellsByDay || {}).flat().concat(Object.values(choreCellsByDay || {}).flat());
+        const c = all.find((x) => x.task.id === b.dataset.tid && String(x.occ ?? "") === b.dataset.occ);
+        if (!c) return;
+        if (c.task.kind === "task") openTaskItemForm(c.task, c.occ ?? null); else { state.choreMember = null; go("#/tasks"); }
+      };
+    });
+    body.querySelectorAll(".mealwk").forEach((b) => {
+      b.onclick = (e) => { e.stopPropagation(); go("#/meals"); };
+    });
+    body.querySelectorAll(".dh, .wmore").forEach((h) => {
+      h.onclick = () => { state.viewDay = new Date(h.dataset.k + "T00:00"); state.calView = "day"; renderCalendar(); };
+    });
+  }
+  wireWeek();
 }
 
 function renderWeekBody(body, byDay, instances, mealsByDay, taskCellsByDay) {
