@@ -770,61 +770,160 @@ button.finrow:hover{ border-color:var(--accent); }
    20mm accessible-kiosk floor, which is the point.
    ========================================================================== */
 html.kidmode #wallRail, html.kidmode #wallInfo, html.kidmode #wallPeople,
-html.kidmode #wallFab, html.kidmode .homefab{ display:none !important; }
-html.kidmode body{ display:block; }
-.kidwrap{ min-height:100dvh; padding:18px 22px 26px; background:var(--bg);
-  display:flex; flex-direction:column; gap:16px; }
-.kidtop{ display:flex; align-items:center; gap:14px; }
-.kidtop .avatar{ width:56px; height:56px; font-size:24px; }
-.kidname{ font-size:26px; font-weight:800; }
-.kidstars{ margin-left:auto; font-size:30px; letter-spacing:4px; }
-.kidhome{ width:56px; height:56px; border-radius:50%; background:var(--panel2); color:var(--text);
-  font-size:24px; padding:0; display:grid; place-items:center; }
-.kbands{ display:flex; gap:12px; }
-.kband{ flex:1; min-height:64px; border-radius:16px; background:var(--panel);
-  border:2px solid var(--line); color:var(--muted); font-size:17px; font-weight:800; }
-.kband.on{ background:var(--kidt); border-color:var(--kid); color:var(--text); }
-.kprog{ position:relative; height:26px; border-radius:13px; background:var(--line); overflow:hidden;
-  display:flex; align-items:center; }
-.kprog i{ position:absolute; inset:0 auto 0 0; background:var(--kid); border-radius:13px; }
-.kprog span{ position:relative; margin-left:12px; font-size:13px; font-weight:800; color:#fff;
-  mix-blend-mode:difference; }
-.kgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:24px; align-content:start; }
-/* pre-reader: a fixed 2x3 so cards are big, not a wall of small ones. auto-fill would
-   lay six 180px tracks and leave two lonely cards at the minimum size. */
-/* 3-up on the wall, 2-up in the hand: 3 columns at 390px gives 118px cards, well
-   under the 45mm a 5-year-old needs. */
-.kidwrap.pre .kgrid{ grid-template-columns:repeat(2,1fr); }
-@media (min-width:1000px) and (orientation:landscape){
-  .kidwrap.pre .kgrid{ grid-template-columns:repeat(3,1fr); }
-}
-.kidwrap.reader .kgrid{ grid-template-columns:repeat(4,1fr); }
-.kcard{ position:relative; }
-/* the whole card is the target; hit region padded ~5mm past the visual edge */
-.kmain{ width:100%; min-height:200px; border-radius:22px; background:var(--panel);
+html.kidmode #wallFab, html.kidmode .homefab, html.kidmode #phoneTabs,
+html.kidmode #ambient{ display:none !important; }
+/* W15.2 — Kid Mode is a FITTED screen, not a scrolling page. The whole day is on
+   it at once; if it doesn't fit, the cards get smaller, they don't move off-screen. */
+html.kidmode, html.kidmode body{ height:100dvh; overflow:hidden; }
+html.kidmode body{ display:block; margin:0; padding:0; }
+html.kidmode #app{ height:100dvh; overflow:hidden; }
+.kidwrap{ height:100dvh; padding:10px 14px 12px; background:var(--bg);
+  display:flex; flex-direction:column; gap:8px; overflow:hidden; }
+.kidwrap > *{ flex:0 0 auto; }
+
+.kidtop{ display:flex; align-items:center; gap:10px; }
+.kidtop .avatar{ width:clamp(34px,6vh,54px); height:clamp(34px,6vh,54px); font-size:clamp(15px,2.6vh,22px); }
+.kidname{ font-size:clamp(16px,3vh,26px); font-weight:800; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+.kidstars{ margin-left:auto; font-size:clamp(17px,3.2vh,30px); letter-spacing:3px; }
+.kidhome{ width:clamp(40px,6.5vh,56px); height:clamp(40px,6.5vh,56px); border-radius:50%;
+  background:var(--panel2); color:var(--text); font-size:clamp(18px,3vh,24px); padding:0;
+  display:grid; place-items:center; flex:0 0 auto; }
+
+/* the day: one row per band, weighted so unfinished work gets the space */
+.kday{ flex:1 1 auto; min-height:0; display:grid; gap:8px; }
+.kband2{ display:grid; grid-template-rows:auto minmax(0,1fr); gap:6px; min-height:0;
+  border-radius:18px; padding:6px 9px 9px; background:var(--panel2);
+  border:2px solid transparent; }
+/* the band happening NOW is the loudest thing on the screen — that was always the
+   job bands were meant to do, and a tab bar made the child ask for it instead */
+.kband2.now{ background:var(--accent-soft); border-color:var(--accent); }
+/* still to come: full size, set back — visible without competing with now */
+.kband2.later{ opacity:.7; }
+.kband2.finished{ grid-template-rows:auto; padding:5px 9px 6px; opacity:.8; }
+
+.kbhead{ display:flex; align-items:center; gap:8px; min-width:0; }
+.kbico{ font-size:clamp(15px,2.6vh,22px); line-height:1; }
+.kbword{ font-size:clamp(11px,1.9vh,16px); font-weight:800; color:var(--muted);
+  text-transform:uppercase; letter-spacing:.6px; }
+.kbnow{ font-size:clamp(10px,1.7vh,14px); font-weight:900; color:var(--accent);
+  background:var(--panel); border-radius:999px; padding:2px 9px; }
+.kbcount{ margin-left:auto; font-size:clamp(13px,2.2vh,19px); font-weight:800;
+  color:var(--muted); letter-spacing:2px; }
+.kband2.finished .kbcount{ color:var(--pos); }
+
+.kbcards{ display:grid; gap:10px; min-height:0; min-width:0;
+  grid-template-columns:repeat(var(--c,2),minmax(0,1fr));
+  grid-template-rows:repeat(var(--r,1),minmax(0,1fr)); }
+/* Cards stay CARD-shaped. Left to fill a 1200px band a single chore became a
+   banner with a small glyph adrift in it — the art is what a pre-reader actually
+   reads, so the box is tied to the height the band could give it and centred. */
+.kcard{ position:relative; min-height:0; min-width:0;
+  height:100%; width:auto; aspect-ratio:1.25;
+  min-width:min(100%,150px); max-width:100%;
+  justify-self:center; align-self:stretch; }
+/* the whole card is the target; the cell sizes it, the contents scale to the cell */
+.kmain{ width:100%; height:100%; border-radius:20px; background:var(--panel);
   border:3px solid var(--line); display:flex; flex-direction:column; align-items:center;
-  justify-content:center; gap:8px; padding:16px; color:var(--text); }
-.kcard::after{ content:""; position:absolute; inset:-13px; pointer-events:none; }
-.kemo{ font-size:64px; line-height:1; }
-.kimg{ width:104px; height:104px; border-radius:16px; object-fit:cover; }
-.ktitle{ font-size:16px; font-weight:700; text-align:center; padding:0 6px; }
-.kcheck{ position:absolute; right:12px; top:10px; font-size:40px; color:var(--green); font-weight:900; }
+  justify-content:center; gap:4px; padding:8px; color:var(--text); overflow:hidden; }
+/* The art is sized from the card height kidFit actually computed (--kh), not from
+   container-query units: cqmin needs size containment, which not every browser the
+   family owns supports, and the silent fallback made a 220px card carry a 50px
+   glyph. A number we already know beats a unit we have to hope for. */
+.kemo{ font-size:clamp(16px, calc(var(--kh, 120px) * .38), 96px); line-height:1.05; overflow:hidden; }
+.kimg{ width:clamp(24px, calc(var(--kh, 120px) * .50), 150px);
+  height:clamp(24px, calc(var(--kh, 120px) * .50), 150px);
+  border-radius:14px; object-fit:cover; }
+.ktitle{ font-size:clamp(9px, calc(var(--kh, 120px) * .12), 22px); font-weight:700;
+  text-align:center; line-height:1.15; padding:0 4px; display:-webkit-box;
+  -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.kcheck{ position:absolute; right:8px; top:6px; font-size:clamp(18px,4.5vh,40px);
+  color:var(--pos); font-weight:900; }
 /* done = three redundant signals; never colour alone (~8% of boys are red/green deficient) */
-.kcard.done .kmain{ background:var(--panel2); border-color:var(--green); opacity:.62; }
+.kcard.done .kmain{ background:var(--panel2); border-color:var(--pos); opacity:.62; }
 .kcard.done .kemo,.kcard.done .kimg{ filter:grayscale(1); }
 .kcard.done .ktitle{ text-decoration:line-through; }
-.kspeak{ position:absolute; left:10px; top:10px; width:52px; height:52px; border-radius:50%;
-  background:var(--kidt); color:var(--text); font-size:22px; padding:0; display:grid; place-items:center;
-  border:2px solid var(--kid); }
+.kspeak{ position:absolute; left:8px; top:6px; width:clamp(44px,6vh,52px); height:clamp(44px,6vh,52px);
+  border-radius:50%; background:var(--kidt); color:var(--text); font-size:clamp(15px,2.6vh,22px);
+  padding:0; display:grid; place-items:center; border:2px solid var(--kid); }
 .kcard.pop .kmain{ animation:kpop .5s ease; }
 @keyframes kpop{ 0%{transform:scale(1)} 40%{transform:scale(1.06)} 100%{transform:scale(1)} }
-.kdone{ font-size:22px; font-weight:800; color:var(--muted); padding:30px 4px; }
-.kprize{ display:flex; align-items:center; gap:14px; background:var(--accent-soft); border:2px solid var(--star);
-  border-radius:20px; padding:14px 18px; font-size:20px; font-weight:800; margin-top:auto; }
-.kpe{ font-size:38px; }
-.kpbtn{ margin-left:auto; background:var(--star); font-size:19px; font-weight:800;
-  border-radius:14px; padding:14px 22px; min-height:56px; }
-@media(prefers-reduced-motion:reduce){ .kcard.pop .kmain{ animation:none; } }
+
+/* a finished band keeps its evidence — small, ticked, and still tappable to undo */
+.kthumbs{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.kthumb{ position:relative; width:clamp(36px,6vh,54px); height:clamp(36px,6vh,54px);
+  border-radius:12px; background:var(--panel); border:2px solid var(--pos); padding:0;
+  display:grid; place-items:center; overflow:visible; opacity:.75; }
+.kthumb .kemo.kt{ font-size:clamp(16px,2.8vh,24px); }
+.kthumb .kimg.kt{ width:100%; height:100%; border-radius:10px; filter:grayscale(1); }
+.ktick{ position:absolute; right:-5px; top:-7px; font-size:clamp(13px,2.2vh,18px);
+  color:var(--pos); font-weight:900; }
+
+.kdone{ font-size:clamp(16px,3vh,24px); font-weight:800; color:var(--muted);
+  display:grid; place-items:center; }
+
+/* W15.4 — what the stars are FOR, pinned where it can't scroll away */
+.kready{ display:flex; gap:8px; flex-wrap:wrap; }
+.kreadyb{ background:var(--panel); border:2px solid var(--star); color:var(--text);
+  border-radius:14px; padding:8px 14px; font-size:clamp(12px,2vh,16px); font-weight:800;
+  min-height:44px; }
+.kprize{ display:flex; align-items:center; gap:12px; background:var(--panel);
+  border:2px solid var(--line); border-radius:18px; padding:8px 14px;
+  font-size:clamp(13px,2.2vh,20px); font-weight:800; }
+.kprize.ready{ background:var(--accent-soft); border-color:var(--star); }
+.kprize.empty{ color:var(--muted); }
+.kpe{ font-size:clamp(22px,4vh,38px); line-height:1; }
+.kpimg{ width:clamp(32px,6vh,56px); height:clamp(32px,6vh,56px); border-radius:12px; object-fit:cover; }
+.kpt{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.kpstars{ margin-left:auto; font-size:clamp(15px,3vh,28px); letter-spacing:3px; color:var(--star); }
+.kpstars.num{ letter-spacing:0; font-size:clamp(12px,2vh,17px); color:var(--muted); font-weight:700; }
+.kpcost{ font-size:clamp(12px,2vh,17px); color:var(--muted); }
+.kpbtn{ background:var(--star); color:#fff; font-size:clamp(13px,2.2vh,19px); font-weight:800;
+  border-radius:14px; padding:10px 18px; min-height:48px; }
+.kprize.ready .kpbtn{ animation:kpulse 1.6s ease-in-out 3; }
+@keyframes kpulse{ 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+@media(prefers-reduced-motion:reduce){
+  .kcard.pop .kmain{ animation:none; }
+  .kprize.ready .kpbtn{ animation:none; }
+}
+/* Short viewport (a phone on its side, or a laptop window squashed vertically):
+   four stacked band headers cost ~80px of the ~390px available, which is the
+   difference between 56px cards and 22px ones. Put the label BESIDE the cards. */
+@media (max-height:560px){
+  /* the prize strip moves UP beside the identity row: two short bars stacked cost
+     ~68px of a 390px screen, which is exactly the margin between a 56px card and a
+     47px one. Side by side they cost one. */
+  .kidwrap{ padding:6px 10px 8px; gap:6px;
+    display:grid; grid-template-columns:1fr minmax(200px,34%);
+    grid-template-rows:auto auto minmax(0,1fr);
+    grid-template-areas:"top prize" "err err" "day day"; }
+  .kidtop{ grid-area:top; gap:8px; }
+  .kidwrap > .kprize{ grid-area:prize; }
+  .kidwrap > .err{ grid-area:err; }
+  .kidwrap > .kday{ grid-area:day; }
+  .kidwrap > .kready{ display:none; }   /* the prize strip carries the live action */
+  .kday{ gap:6px; }
+  /* align-items must stay STRETCH: centring makes .kbcards shrink to its content
+     height, which collapsed every card to 22px in landscape. */
+  .kband2{ grid-template-columns:minmax(66px,auto) minmax(0,1fr);
+    grid-template-rows:minmax(0,1fr); gap:8px; padding:5px 8px; align-items:stretch; }
+  .kband2 .kbhead{ align-self:center; }
+  .kband2.finished{ grid-template-rows:auto; }
+  .kbhead{ flex-direction:column; align-items:flex-start; gap:1px; }
+  .kbword{ font-size:10px; letter-spacing:.3px; }
+  .kbcount{ margin-left:0; font-size:10px; }
+  .kbnow{ font-size:9px; padding:1px 6px; }
+  .kbcards{ gap:6px; }
+  .kprize{ padding:5px 10px; }
+  .ktitle{ -webkit-line-clamp:2; }
+}
+
+@media (min-width:1000px) and (orientation:landscape){
+  .kidwrap{ padding:14px 20px 18px; gap:10px; }
+  .kday{ gap:10px; }
+  .kbcards{ gap:14px; }
+  .kpbtn{ min-height:56px; }
+}
 
 /* ---- W6: countdowns ---- */
 .cdgrid{ display:grid; grid-template-columns:1fr; gap:12px; }
@@ -1062,4 +1161,75 @@ html.hastabs .modal{ padding-bottom:calc(env(safe-area-inset-bottom) + 8px); }
   .rwnew{ flex:0 0 auto; min-height:56px; padding:0 16px; border-radius:13px; font-size:15px;
     font-weight:800; background:transparent; border:1px dashed var(--line); color:var(--muted); }
   .rwnew:hover{ border-color:var(--accent); color:var(--accent); }
+}
+
+/* ==========================================================================
+   W15.1 — the icon field. Photo first, because that is what a parent standing
+   in the bedroom actually wants, and it is the option the app never offered.
+   ========================================================================== */
+.iconfield{ border:1px solid var(--line); border-radius:14px; padding:10px;
+  background:var(--panel); display:flex; flex-direction:column; gap:8px; }
+.ipmain{ display:flex; gap:12px; align-items:flex-start; }
+.ippreview{ width:76px; height:76px; flex:0 0 auto; border-radius:14px; background:var(--panel2);
+  border:2px dashed var(--line); display:grid; place-items:center; overflow:hidden; }
+.ippreview img{ width:100%; height:100%; object-fit:cover; }
+.ipemo{ font-size:40px; line-height:1; }
+.ipnone{ font-size:10px; color:var(--muted); text-align:center; padding:0 4px; line-height:1.2; }
+.ipactions{ display:flex; flex-wrap:wrap; gap:6px; flex:1 1 auto; min-width:0; }
+.ipbtn{ background:var(--panel2); color:var(--text); border:1px solid var(--line);
+  border-radius:11px; padding:9px 12px; font-size:13px; font-weight:700; min-height:44px; }
+.ipbtn.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+.ipemoji{ display:grid; grid-template-columns:repeat(auto-fill,minmax(46px,1fr)); gap:6px;
+  max-height:190px; overflow:auto; padding:4px; background:var(--panel2); border-radius:12px; }
+.ipe{ background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  font-size:24px; padding:0; min-height:46px; }
+.iplink input{ width:100%; }
+.iphint{ font-size:12px; color:var(--muted); margin:0; }
+.iphint.bad{ color:var(--danger); font-weight:700; }
+
+/* ==========================================================================
+   W15.5 — chore TOTALS in Schedule and Week; the list only on Day.
+   ========================================================================== */
+.sfoot .chores{ display:block; width:100%; text-align:left; background:transparent;
+  border:0; padding:6px 0 0; color:var(--muted); font-size:12px; min-height:0; }
+.cbar{ height:8px; border-radius:5px; background:var(--line); overflow:hidden; margin-bottom:4px; }
+.cbar i{ display:block; height:100%; background:var(--pos); border-radius:5px; }
+.cbar.all i{ background:var(--star); }
+.cbnum{ font-size:12px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.cbnum b{ color:var(--text); }
+.cbwho{ display:inline-flex; align-items:center; gap:3px; font-weight:700; }
+.cbwho i{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+.dhch{ font-size:11px; font-weight:800; color:var(--muted); margin-top:2px; }
+.dhch.all{ color:var(--pos); }
+
+.daychores{ background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  padding:10px 12px; margin-bottom:10px; }
+.dchead{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-weight:800; font-size:14px; }
+.dchead .cbar{ flex:1 1 120px; min-width:120px; margin:0; }
+.dchead .cbnum{ font-weight:600; }
+.dcbands{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.dcband{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.dcbl{ font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase;
+  letter-spacing:.5px; min-width:96px; }
+.chorechip{ display:inline-flex; align-items:center; gap:6px; background:var(--panel2);
+  border:1px solid var(--line); border-left:4px solid var(--slate); border-radius:10px;
+  padding:6px 10px; font-size:13px; min-height:40px; cursor:pointer; }
+.chorechip.done{ opacity:.55; text-decoration:line-through; }
+.chorechip b{ font-size:11px; color:var(--muted); }
+.cck{ width:22px; height:22px; border-radius:6px; border:2px solid var(--line);
+  background:var(--panel); display:inline-grid; place-items:center; font-size:14px;
+  color:var(--pos); font-weight:900; flex:0 0 auto; }
+.chorechip.done .cck{ border-color:var(--pos); }
+
+/* Narrow phone: the header star board and the prize strip were saying the same
+   thing, and between them they squeezed the child's own name down to "D…" and the
+   prize down to "l.". The prize strip wins — it has the picture — so the header
+   board stands down and the stars wrap under the prize name. */
+@media (max-width:520px){
+  .kidtop .kidstars{ display:none; }
+  .kidname{ flex:1 1 auto; min-width:0; margin-right:auto; }
+  .kprize{ flex-wrap:wrap; row-gap:4px; }
+  .kprize .kpt{ flex:1 1 auto; min-width:0; }
+  .kprize .kpstars{ order:3; flex:1 0 100%; margin-left:0; text-align:center; }
+  .kprize .kpstars.num{ text-align:left; }
 }

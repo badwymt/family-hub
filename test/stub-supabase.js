@@ -107,6 +107,18 @@ export function createClient(){
       signOut: async () => ({ error:null }),
     },
     from: (t) => new Q(t),
+    // W15.1 — Storage. Records what was uploaded so a test can prove the browser
+    // downscaled the file rather than shipping the original megabytes.
+    storage: {
+      from: (bucket) => ({
+        upload: async (p, blob, opts) => {
+          DB._uploads = DB._uploads || [];
+          DB._uploads.push({ bucket, path:p, size: blob && blob.size, type: opts && opts.contentType });
+          return { data:{ path:p }, error:null };
+        },
+        getPublicUrl: (p) => ({ data:{ publicUrl:`https://stub.supabase.co/storage/v1/object/public/${bucket}/${p}` } }),
+      }),
+    },
     rpc: async (name, args) => {
       CALLS.rpc.push({ name, args });
       const mem = (id) => DB.family_members.find(m=>m.id===id);

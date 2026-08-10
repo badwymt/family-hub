@@ -1,7 +1,14 @@
 # Family Hub — every change, and whether it's live
 
 **Verified against `https://family-hub-beta-six.vercel.app` on 2026-08-09.**
-Deployed SW is **v36** (v37 pending the next push). `origin/main` = local `6f8d4d3`, nothing unpushed.
+Deployed SW is **v39** as of the W15 push. The two "pending" commits noted below (v37, v38)
+did land — this file's header was stale, not the deploy.
+
+**W15 is the current state of Kid Mode.** See `W15-Findings-and-Changes.md`: the chore
+picture field (photo / emoji / validated link, backed by the `family-icons` Storage
+bucket), Kid Mode as one fitted non-scrolling screen with no band tabs, a kid profile as
+a one-way door enforced in the router, the pinned prize strip, chore totals instead of
+chore lists in Schedule and Week, and redeem history removed from the UI.
 
 ---
 

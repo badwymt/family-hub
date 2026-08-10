@@ -146,3 +146,40 @@ Chosen over a collectible board because the benchmark identified these as the le
 5. **Never use `#FFFFFF` or `#000000`.** Use `--panel` and `--text`.
 6. **Run `node test/palette.mjs` after touching any colour.** It fails on contrast or ΔE regression.
 7. **Test as every role.** The bugs that reached the wall all survived because no journey ran *as a child*.
+
+---
+
+## 10. Fitted screens (W15)
+
+Kid Mode does not scroll. Not "rarely scrolls" — the promise is that a child sees
+everything for today at once and never has to move the page or choose a tab first.
+That is a layout constraint, so it is enforced by arithmetic rather than by eye:
+
+- `.kidwrap` is `100dvh` with `overflow:hidden`. There is no scroll to fall back on,
+  so an overflow is a visible bug rather than a silent one.
+- The day is a grid of bands. `kidFit()` measures the laid-out board after paint and
+  solves for **one card height shared by every band**:
+  `h = (free − Σ chrome − Σ row-gaps) / Σ rows`.
+  Splitting the height by row count alone starves short bands, because every band
+  pays the same fixed cost for its header, padding and border regardless of how many
+  rows it holds — that produced 43 px cards next to 61 px ones.
+- If `h` falls below the **56 px kid floor**, a row is traded for columns on the
+  tallest band and the solve repeats. Wider-and-shorter always beats smaller.
+- The final `h` is published as `--kh`, and the photo, glyph and label all scale from
+  it. Container-query units were tried first and silently fell back on browsers
+  without size containment, putting a 50 px glyph on a 220 px card. **A number you
+  have already computed beats a unit you have to hope is supported.**
+- Below `560px` of viewport height the band label moves *beside* its cards and the
+  prize strip moves up beside the identity row. Four stacked headers plus a stacked
+  prize bar cost ~110 px of a 390 px landscape screen — exactly the margin between a
+  56 px card and a 47 px one.
+
+`test/fit.mjs` runs this across four surfaces × five chore loads × both children and
+fails on any scrollbar, anything outside the viewport, any card under 56 px, or any
+chore that isn't on screen. 260 checks.
+
+### The rule this adds
+
+8. **A screen that promises to fit must be measured, not eyeballed.** If the layout
+   depends on arithmetic, write the arithmetic down and assert it at several sizes —
+   "it looked fine on my laptop" is how the 43 px card shipped.

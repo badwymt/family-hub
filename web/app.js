@@ -217,6 +217,15 @@ async function render() {
 
     const route = location.hash || "#/";
     const needMember = (fn) => { const m = getMember(); if (!m) return go("#/picker"); state.member = m; return fn(); };
+
+    // W15.3 — a kid profile is a ONE-WAY DOOR. Not "the other routes toast at you":
+    // there are no other routes. Doing it here rather than per-view means no future
+    // screen can leak by forgetting a gate, and the rail/tab filters below are only
+    // there so a child never sees a control that would refuse them.
+    const who = getMember();
+    if (who && who.is_child && !route.startsWith("#/kid/") && !route.startsWith("#/picker")) {
+      return go(`#/kid/${who.id}`);
+    }
     // W0.4: a kid profile can only reach Chores. UI gate, not a security boundary —
     // it's a kitchen wall. The real gate (PIN) lands in W4.
     const kidBlocked = (fn) => needMember(() => {
@@ -399,9 +408,14 @@ function ensureWallShell() {
 function renderRail() {
   const h = location.hash || "";
   const active = (it) => it.route && (it.route === "#/home" ? h.startsWith("#/home") : h.startsWith(it.route));
+  // W15.3 — the phone tab bar has always filtered on is_child; the rail never did, so
+  // a child on the wall saw all seven icons and got a toast for six of them. Same
+  // array, same test, in both chromes — they cannot drift apart again.
+  const me = getMember();
+  const items = (me && me.is_child) ? RAIL_ITEMS.filter((it) => it.route === "#/tasks") : RAIL_ITEMS;
   document.getElementById("wallRail").innerHTML = `
     <div class="railbrand"><span class="rbm">${esc((state.familyName || "Family")[0] || "F")}</span></div>
-    ${RAIL_ITEMS.map((it) => it.id === "_spacer" ? `<div class="railspacer"></div>` : `
+    ${items.map((it) => it.id === "_spacer" ? `<div class="railspacer"></div>` : `
       <button class="navitem${active(it) ? " on" : ""}${it.soon ? " soon" : ""}" data-r="${it.route || ""}"
               ${it.soon ? `disabled title="Coming in ${it.soon}"` : it.hint ? `title="${esc(it.hint)}"` : ""}>
         <span class="ico">${it.icon}</span>${esc(it.label)}
@@ -1155,7 +1169,7 @@ async function renderCalendar() {
   const body = document.getElementById("calbody");
   if (view === "schedule") renderScheduleBody(body, byDay, instances, mealsByDay, taskCellsByDay, choreCellsByDay);
   else if (view === "day") {
-    renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue);
+    renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue, choreCellsByDay);
     if (isWall()) addDaySidebar(body, byDay, mealsByDay, choreCellsByDay);
   }
   else if (view === "week") {
@@ -1312,6 +1326,38 @@ const evPill = (i) => `
 
 // Same pill, dashed and unfilled. That one difference separates "thing that happens"
 // from "thing someone must do" at four metres, with no legend.
+// ============================================================================
+// W15.5 — the calendar answers "how much is left", not "what are the twelve things".
+// ----------------------------------------------------------------------------
+// Chores were rendering as dashed pills in Schedule, Week AND Day, while the
+// Schedule footer counted them as well — the same information twice, and in the
+// five-column Schedule the pills crowded out the events the view exists for.
+// Totals in Schedule and Week; the full list stays on Day, where there is room.
+// ============================================================================
+function choreProgressHTML(cells, withSplit = true) {
+  if (!cells.length) return `<span class="empt">No chores</span>`;
+  const done = cells.filter((c) => c.done).length;
+  const pct = Math.round((done / cells.length) * 100);
+  const per = {};
+  for (const c of cells) {
+    const id = c.task.assigned_to || "_none";
+    const b = per[id] || (per[id] = { done: 0, total: 0 });
+    b.total++; if (c.done) b.done++;
+  }
+  const split = Object.entries(per).map(([id, b]) => {
+    const m = id === "_none" ? null : state.membersById[id];
+    const ink = m ? colorFor(m.color) : "var(--slate)";
+    const tag = m ? esc(avatarInitial(m.name)) : "🙋";
+    return `<span class="cbwho"><i style="background:${ink}"></i>${tag} ${b.done}/${b.total}</span>`;
+  }).join("");
+  if (!withSplit) return `<div class="cbar${done === cells.length ? " all" : ""}"><i style="width:${pct}%"></i></div>
+    <div class="cbnum"><span class="cbtot"><b>${done} of ${cells.length}</b> chores</span></div>`;
+  // one element for the sentence: .cbnum is a flex row, and a bare text node beside
+  // a <b> becomes its own flex item — which innerText then reads as a second line
+  return `<div class="cbar${done === cells.length ? " all" : ""}"><i style="width:${pct}%"></i></div>
+    <div class="cbnum"><span class="cbtot"><b>${done} of ${cells.length}</b> chores</span>${split ? `<span class="cbsep">·</span>${split}` : ""}</div>`;
+}
+
 const chorePill = (c) => `
   <div class="sev task${c.done ? " done" : ""}" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}"
        style="border-left-color:${inkOf(c.task.assigned_to)}">
@@ -1337,8 +1383,9 @@ function renderScheduleBody(body, byDay, instances, mealsByDay, taskCellsByDay, 
     const dinner = meals.find((m) => m.meal_type === "Dinner") || meals[0];
     const done = chores.filter((c) => c.done).length;
 
+    // events and the family's to-dos; CHORES are the footer's count, not pills
     const items = allday.map(evPill).join("") + timed.map(evPill).join("")
-      + todos.map(chorePill).join("") + chores.map(chorePill).join("");
+      + todos.map(chorePill).join("");
     html += `
       <div class="scol${isToday ? " today" : ""}">
         <div class="shd">
@@ -1349,7 +1396,7 @@ function renderScheduleBody(body, byDay, instances, mealsByDay, taskCellsByDay, 
         <div class="sbody">${items || `<p class="empt">Nothing planned</p>`}</div>
         <div class="sfoot">
           <div class="r">🍽️ ${dinner ? `<b>${esc(dinner.title)}</b>` : `<span class="empt">no dinner planned</span>`}</div>
-          <div class="chores">${chores.length ? `Chores ${done} of ${chores.length} done` : "No chores"}</div>
+          <button class="chores" data-k="${key}">${choreProgressHTML(chores)}</button>
         </div>
       </div>`;
   }
@@ -1364,11 +1411,16 @@ function renderScheduleBody(body, byDay, instances, mealsByDay, taskCellsByDay, 
   body.querySelectorAll(".sev.task").forEach((b) => {
     b.onclick = () => { state.choreMember = null; go("#/tasks"); };
   });
+  // the count is a door, not a dead end — the detail is always one tap away
+  body.querySelectorAll(".sfoot .chores").forEach((b) => {
+    b.onclick = () => { state.choreMember = null; go("#/tasks"); };
+  });
 }
 
 // ---- day view: events + tasks; window starts at first item or 9am ----------
-function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue) {
+function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overdue, choreCellsByDay) {
   const dayKey = dateKey(state.viewDay);
+  const dayChores = (choreCellsByDay && choreCellsByDay[dayKey]) || [];
   const isToday = dayKey === dateKey(new Date());
   const dayInsts = (byDay[dayKey] || []);
   const timed = dayInsts.filter((i) => !i.all_day);
@@ -1441,7 +1493,27 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
     return `<span class="taskchip${c.done ? " done" : ""}" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}" style="border-left-color:${col}"><span class="tck" data-tid="${c.task.id}" data-occ="${c.occ ?? ""}">${c.done ? "✓" : ""}</span>${esc(c.task.title)}</span>`;
   };
 
+  // W15.5 — Day is the ONE view that keeps the full chore list, grouped by routine
+  // band so it reads the way the kids' board does rather than as a flat dump.
+  const choreStrip = dayChores.length ? `
+    <div class="daychores">
+      <!-- the per-person split lives in the Day sidebar; repeating it here is noise -->
+      <div class="dchead"><span>✅ Chores</span>${choreProgressHTML(dayChores, false)}</div>
+      <div class="dcbands">${BAND_ORDER.map((bk) => {
+        const g = dayChores.filter((c) => (bandOf(c.task) || "anytime") === bk);
+        if (!g.length) return "";
+        return `<div class="dcband"><span class="dcbl">${BAND_ICON[bk]} ${BAND_WORD[bk]}</span>${g.map((c) => {
+          const mm = c.task.assigned_to ? state.membersById[c.task.assigned_to] : null;
+          return `<span class="chorechip${c.done ? " done" : ""}" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}"
+                        style="border-left-color:${mm ? colorFor(mm.color) : "var(--slate)"}">
+            <span class="cck" data-tid="${esc(c.task.id)}" data-occ="${esc(c.occ ?? "")}">${c.done ? "✓" : ""}</span>
+            ${esc(c.task.title)}${mm ? ` <b>${esc(avatarInitial(mm.name))}</b>` : ""}</span>`;
+        }).join("")}</div>`;
+      }).join("")}</div>
+    </div>` : "";
+
   body.innerHTML = `
+    ${choreStrip}
     ${(allday.length || dayMeals.length || dateTasks.length || od.length) ? `<div class="alldaystrip"><span class="lbl">All day · tasks</span>${
       od.length ? `<span class="overduechip" id="overdueChip">⚠ Overdue (${od.length})</span>` : ""
     }${dayMeals.map((m) => `<span class="mealchip" data-mid="${esc(m.id)}" style="background:${MEAL_COLOR}">🍴 ${esc(m.meal_type)} — ${esc(m.title)}</span>`).join("")
@@ -1460,6 +1532,20 @@ function renderDayBody(body, byDay, instances, mealsByDay, taskCellsByDay, overd
   const findCell = (id, occ) => allCells.find((c) => c.task.id === id && String(c.occ ?? "") === occ);
   body.querySelectorAll(".tck").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const c = findCell(b.dataset.tid, b.dataset.occ); if (c && !c.done) { completeTaskCell(c); renderCalendar(); } }; });
   body.querySelectorAll(".taskchip,.taskblock").forEach((b) => { b.onclick = () => { const c = findCell(b.dataset.tid, b.dataset.occ); if (c) openTaskItemForm(c.task, c.occ ?? null); }; });
+  const findChore = (id, occ) => dayChores.find((c) => c.task.id === id && String(c.occ ?? "") === occ);
+  body.querySelectorAll(".cck").forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const c = findChore(b.dataset.tid, b.dataset.occ);
+      if (!c) return;
+      if (c.done) enqueueUncomplete(c.task, c.occ ?? null, c.task.assigned_to || state.member.id);
+      else completeTaskCell(c);
+      flushQueue(); renderCalendar();
+    };
+  });
+  body.querySelectorAll(".chorechip").forEach((b) => {
+    b.onclick = () => { const c = findChore(b.dataset.tid, b.dataset.occ); if (c) openTaskForm(c.task); };
+  });
   const oc = document.getElementById("overdueChip"); if (oc) oc.onclick = () => { state.calView = "tasks"; renderCalendar(); };
   body.querySelectorAll(".hourslot").forEach((s) => { s.onclick = () => openEventForm(null, dayKey); });
 }
@@ -1485,8 +1571,11 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
 
   const head = days.map((d, i) => {
     const k = dateKey(d), wknd = i >= 5;
+    const ch = (choreCellsByDay && choreCellsByDay[k]) || [];
+    const cdone = ch.filter((c) => c.done).length;
     return `<div class="dh${wknd ? " wknd" : ""}${k === todayKey ? " today" : ""}" data-k="${k}">
-      <div class="dhw">${WD[i]}</div><div class="dhn">${d.getDate()}</div></div>`;
+      <div class="dhw">${WD[i]}</div><div class="dhn">${d.getDate()}</div>
+      ${ch.length ? `<div class="dhch${cdone === ch.length ? " all" : ""}" title="${cdone} of ${ch.length} chores done">✅ ${cdone}/${ch.length}</div>` : ""}</div>`;
   }).join("");
 
   const allday = days.map((d, i) => {
@@ -1538,8 +1627,8 @@ function renderWeekGrid(body, byDay, instances, mealsByDay, taskCellsByDay, chor
     }
     if (hidden) blocks += `<div class="wmore" data-k="${k}">+${hidden}</div>`;
 
-    // chores + calendar to-dos as dashed inline pills at their due time
-    const cells = ((taskCellsByDay && taskCellsByDay[k]) || []).concat((choreCellsByDay && choreCellsByDay[k]) || []);
+    // calendar to-dos only — a chore's number lives in the day header (W15.5)
+    const cells = ((taskCellsByDay && taskCellsByDay[k]) || []);
     for (const c of cells) {
       if (!c.due_time) continue;
       const p = c.due_time.split(":"); const th = (+p[0]) + ((+p[1]) || 0) / 60;
@@ -2223,10 +2312,15 @@ async function renderChores() {
   // W11 — a pre-reader's Chores IS Kid Mode. The family grid is unreadable to a
   // 5-year-old and shows him other people's chores; there is no version of it he
   // should ever see.
-  const me = state.member;
-  if (me && me.is_child && kidModeOf(me) === "prereader" && !state.kidMode) {
-    return go(`#/kid/${me.id}`);
-  }
+  // renderChores is reachable from outside the router — flushQueue's finally and
+  // wakeAmbient both call it directly — so it cannot assume viewTasks ran first.
+  // That was a real crash: an offline write flushing on load, while the hash was
+  // still #/tasks and before the kid redirect landed, hit state.members === null.
+  await loadContext();
+  const me = state.member || getMember();
+  if (!me) return;
+  state.member = me;
+  if (me.is_child && !state.kidMode) return go(`#/kid/${me.id}`);
   if (isWall() && !state.kidMode) return renderChoreWall();
   return state.choreMember ? renderChoreMember() : renderChoreHome();
 }
@@ -2323,16 +2417,16 @@ async function renderChoreMember() {
   const todayKey = dateKey(new Date());
   const { winStart, winEnd } = choreWindow();
 
-  let tasks = [], allChores = [], grabs = [], doneMap = new Set(), board = [], rewards = [], reds = [], pendingAll = [], err = "";
+  let tasks = [], allChores = [], grabs = [], doneMap = new Set(), board = [], rewards = [], pendingAll = [], err = "";
   try {
     const r = await fetchTasks(); if (r.error) throw r.error;
     allChores = (r.data || []).filter((t) => t.kind !== "task");
     tasks = allChores.filter((t) => t.assigned_to === mid);
     grabs = allChores.filter((t) => !t.assigned_to);              // W14 — claimable on the phone too
     doneMap = await fetchDoneMap(allChores.map((t) => t.id));
-    const [bd, rw, rd, pr] = await Promise.all([fetchLeaderboard(), fetchRewards(), fetchRedemptions(mid), fetchPendingRedemptions()]);
-    if (bd.error) throw bd.error; if (rw.error) throw rw.error; if (rd.error) throw rd.error;
-    board = bd.data || []; rewards = rw.data || []; reds = rd.data || []; pendingAll = pr.data || [];
+    const [bd, rw, pr] = await Promise.all([fetchLeaderboard(), fetchRewards(), fetchPendingRedemptions()]);
+    if (bd.error) throw bd.error; if (rw.error) throw rw.error; if (pr.error) throw pr.error;
+    board = bd.data || []; rewards = rw.data || []; pendingAll = pr.data || [];
   } catch (e) { err = e.message || String(e); }
   state.pending = state.pending || new Set();
   const bal = (board.find((x) => x.id === mid) || {}).star_balance || 0;
@@ -2403,7 +2497,10 @@ async function renderChoreMember() {
       <h4 class="lbh" style="margin-top:20px">🎁 Rewards bank</h4>
       <div class="rewardbank" id="rewardbank"></div>
       ${isKidView ? "" : `<button class="ghost" id="addReward" style="margin-top:12px">+ Create reward</button>`}
-      ${reds.length ? `<h4 class="lbh" style="margin-top:20px">History</h4><div class="redlist" id="redlist"></div>` : ""}
+      <!-- W15.6: redemption History removed. The pending queue above is actionable;
+           a log of what was already handed over is not, and it pushed the rewards
+           bank — the thing a child is actually looking for — below the fold. -->
+      ${""}
       ${isKidView ? "" : `<div class="row"><button class="link" id="signout">Sign out</button></div>`}
     </section>`;
   if (!isKidView) {
@@ -2496,11 +2593,6 @@ async function renderChoreMember() {
   });
   rb.querySelectorAll(".rwedit").forEach((b) => { b.onclick = () => openRewardForm(rewardsById[b.dataset.id]); });
 
-  const rl = document.getElementById("redlist");
-  if (rl) rl.innerHTML = reds.map((x) => {
-    const rw = rewardsById[x.reward_id];
-    return `<div class="redrow"><span>${rw ? esc(rw.title) : "Reward"}</span><span class="redcost">−${x.star_cost}⭐</span><span class="redstatus s-${esc(x.status)}">${esc(x.status)}</span></div>`;
-  }).join("");
 }
 
 // ============================================================================
@@ -2547,14 +2639,134 @@ function streakFor(memberId, tasks, doneMap, days = 21) {
 }
 
 const BANDS = [["morning", "☀️ Morning"], ["afternoon", "🌤️ Afternoon"], ["evening", "🌙 Evening"]];
+const BAND_ICON = { morning: "☀️", afternoon: "🌤️", evening: "🌙", anytime: "🕐" };
+const BAND_WORD = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", anytime: "Any time" };
+const BAND_ORDER = ["morning", "afternoon", "evening", "anytime"];
 const bandOf = (t) => (t.time_band || (t.due_time ? (t.due_time < "12:00" ? "morning" : t.due_time < "17:00" ? "afternoon" : "evening") : null));
 const iconHTML = (t) => {
   const a = t.icon_url;
   if (!a) return `<span class="cico cico-none" aria-hidden="true"></span>`;
-  return /^(https?:|data:)/.test(a)
-    ? `<span class="cico"><img src="${esc(a)}" alt="" /></span>`
+  return isImgSrc(a)
+    ? `<span class="cico"><img src="${esc(a)}" alt="" loading="lazy" /></span>`
     : `<span class="cico">${esc(a)}</span>`;
 };
+
+// ============================================================================
+// W15.1 — THE ICON FIELD. Three ways in: photo, emoji, link.
+// ----------------------------------------------------------------------------
+// Until now the only route in was pasting a URL, which is why the live data held
+// a Google *share link*, a stock-photo *product page*, and a data URL truncated
+// at 400 chars by a maxlength I put there myself. None of the three can ever
+// render. A parent standing in a bedroom wants a photo of THAT bed; give them
+// the camera and validate everything else instead of failing silently.
+// ============================================================================
+const ICON_BUCKET = "family-icons";
+const isImgSrc = (v) => /^(https?:\/\/|data:image\/)/i.test(String(v || ""));
+const ICON_EMOJI = [
+  "🛏️","🦷","🪥","🚿","🛁","🧼","👕","👖","🧦","👟",
+  "🎒","📚","📖","✏️","🎨","🖍️","🧩","🧸","🎹","⚽",
+  "🚲","🧹","🧺","🗑️","🚮","🍽️","🥣","🍳","🍎","💧",
+  "🌱","🐕","🐈","🐟","💻","📺","🎮","🕐","⭐","🎁",
+];
+
+// A 4 MB phone photo renders as a 104 px tile. Downscaling before upload is the
+// difference between a wall that paints instantly and one that stutters per card.
+async function downscaleImage(file, max = 512, quality = 0.82) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error("That file isn't an image we can read."));
+      i.src = url;
+    });
+    const scale = Math.min(1, max / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    const w = Math.max(1, Math.round((img.naturalWidth || max) * scale));
+    const h = Math.max(1, Math.round((img.naturalHeight || max) * scale));
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(img, 0, 0, w, h);
+    return await new Promise((res, rej) =>
+      c.toBlob((b) => (b ? res(b) : rej(new Error("Could not process that image."))), "image/jpeg", quality));
+  } finally { URL.revokeObjectURL(url); }
+}
+
+async function uploadIcon(file) {
+  const blob = await downscaleImage(file);
+  const path = `${state.familyId || "family"}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const { error } = await supabase.storage.from(ICON_BUCKET)
+    .upload(path, blob, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
+  if (error) throw error;
+  return supabase.storage.from(ICON_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+const iconPreviewHTML = (v) => !v
+  ? `<span class="ipnone">no picture yet</span>`
+  : isImgSrc(v) ? `<img src="${esc(v)}" alt="" />` : `<span class="ipemo">${esc(v)}</span>`;
+
+// hiddenId keeps the value in one place the form already knows how to read
+function iconFieldHTML(value, hiddenId) {
+  return `
+    <div class="iconfield">
+      <div class="ipmain">
+        <div class="ippreview">${iconPreviewHTML(value)}</div>
+        <div class="ipactions">
+          <button type="button" class="ipbtn primary ip-photo">📷 Take / choose a photo</button>
+          <button type="button" class="ipbtn ip-emojit">🙂 Pick an emoji</button>
+          <button type="button" class="ipbtn ip-linkt">🔗 Paste a link</button>
+          <button type="button" class="ipbtn ip-clear">Clear</button>
+        </div>
+      </div>
+      <input type="file" class="ip-file" accept="image/*" hidden />
+      <div class="ipemoji" hidden>${ICON_EMOJI.map((e) => `<button type="button" class="ipe" data-e="${e}">${e}</button>`).join("")}</div>
+      <div class="iplink" hidden><input class="ip-link" type="url" placeholder="https://…/bed.jpg" /></div>
+      <p class="iphint">A photo of your own bed beats any glyph — a 5-year-old recognises it instantly.</p>
+      <input type="hidden" id="${hiddenId}" value="${esc(value || "")}" />
+    </div>`;
+}
+
+function wireIconField(root, hiddenId) {
+  const f = root.querySelector(".iconfield");
+  if (!f) return;
+  const hid = root.querySelector("#" + hiddenId);
+  const prev = f.querySelector(".ippreview");
+  const hint = f.querySelector(".iphint");
+  const say = (msg, bad) => { hint.textContent = msg; hint.classList.toggle("bad", !!bad); };
+  const set = (v) => { hid.value = v || ""; prev.innerHTML = iconPreviewHTML(v); };
+
+  const file = f.querySelector(".ip-file");
+  f.querySelector(".ip-photo").onclick = () => file.click();
+  file.onchange = async (e) => {
+    const pick = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!pick) return;
+    say("Uploading…");
+    try { set(await uploadIcon(pick)); say("Photo saved ✓"); }
+    catch (err) { say(err.message || "Upload failed — try a smaller photo.", true); }
+  };
+
+  const grid = f.querySelector(".ipemoji");
+  f.querySelector(".ip-emojit").onclick = () => { grid.hidden = !grid.hidden; };
+  grid.querySelectorAll(".ipe").forEach((b) => {
+    b.onclick = () => { set(b.dataset.e); grid.hidden = true; say("Emoji set ✓"); };
+  });
+
+  const linkRow = f.querySelector(".iplink"), link = f.querySelector(".ip-link");
+  f.querySelector(".ip-linkt").onclick = () => { linkRow.hidden = !linkRow.hidden; if (!linkRow.hidden) link.focus(); };
+  // validate on blur: a share link or a product page is HTML, and <img> shows nothing
+  link.onblur = () => {
+    const v = link.value.trim();
+    if (!v) return;
+    if (!isImgSrc(v)) return say("That doesn't look like an image address — try 📷 instead.", true);
+    say("Checking that link…");
+    const probe = new Image();
+    probe.onload = () => { set(v); say("Link works ✓"); };
+    probe.onerror = () => say("That link isn't an image — try 📷 instead.", true);
+    probe.src = v;
+  };
+
+  f.querySelector(".ip-clear").onclick = () => { set(""); say(""); };
+}
 
 function choreCooldown(key) {
   state._cool = state._cool || {};
@@ -2985,7 +3197,19 @@ async function showAmbient() {
         <div class="m">${cd ? `in ${daysUntil(cd.starts_at)} days` : ""}</div></div>
     </div>
     <div class="ambhint">Tap anywhere to wake</div>`;
+  // W15.3 — CHECK AGAIN. The guard at the top of this function ran before four awaited
+  // fetches; a child can walk up and open Kid Mode inside that window, and the old code
+  // then painted a screensaver over him. Observed live. State read before an await is
+  // not state at the time you act on it.
+  if (!isWall() || ambientBlocked()) return ambientArm();
   a.classList.add("on");
+}
+
+// used whenever something takes over the screen for a reason (Kid Mode, a modal)
+function hideAmbient() {
+  clearTimeout(state._ambTimer);
+  const a = document.getElementById("ambient");
+  if (a) a.classList.remove("on");
 }
 
 function wakeAmbient() {
@@ -3001,7 +3225,7 @@ function wakeAmbient() {
 
 function ambientArm() {
   clearTimeout(state._ambTimer);
-  if (!isWall()) return;
+  if (!isWall() || state.kidMode) return;   // a child using the screen is USING the screen
   state._ambTimer = setTimeout(showAmbient, ambIdleMs());
 }
 
@@ -3129,29 +3353,66 @@ function kidIdleArm() {
     exitKidMode();
   }, KID_IDLE_MS);
 }
+// W15.3 — the ONLY door out of a kid profile is back to the profile picker. Kid Mode
+// is now the whole app for a child, so "home" can't mean the family calendar: that is
+// a place they are not allowed to be, and bouncing them off it is worse than not
+// offering it. Handing the screen back to whoever picks up next is the honest exit.
 function exitKidMode() {
   state.kidMode = null; clearTimeout(state._kidIdle);
+  clearTimeout(state._kidResizeT);
+  window.removeEventListener("resize", kidRelayout);
   document.documentElement.classList.remove("kidmode");
-  go(isWall() ? "#/home" : "#/tasks");
+  // A PARENT previewing a child's board must not be logged out by leaving it — only
+  // a child's own session hands the screen back.
+  const me = getMember();
+  if (me && me.is_child) { clearMember(); return go("#/picker"); }
+  go("#/tasks");
+}
+function kidRelayout() {
+  clearTimeout(state._kidResizeT);
+  state._kidResizeT = setTimeout(() => { if (state.kidMode) renderKidMode(); }, 180);
 }
 
 async function viewKidMode(memberId) {
   await loadContext();
-  const m = state.membersById[memberId];
+  const me = state.member;
+  // a child can only ever open their own board, whatever the hash says
+  const target = (me && me.is_child) ? me.id : memberId;
+  const m = state.membersById[target];
   if (!m) return go("#/tasks");
-  state.kidMode = memberId;
+  if (target !== memberId) return go(`#/kid/${target}`);
+  state.kidMode = target;
   document.documentElement.classList.add("kidmode");
+  hideAmbient();                                   // never let a screensaver sit over a child
   await renderKidMode();
   subscribeRealtime(["tasks", "task_completions", "family_members", "rewards", "redemptions"], () => renderKidMode());
+  window.removeEventListener("resize", kidRelayout);
+  window.addEventListener("resize", kidRelayout);  // the whole day must keep fitting
   kidIdleArm();
 }
 
+// ----------------------------------------------------------------------------
+// W15.2 — THE WHOLE DAY, ON ONE SCREEN, WITH NO SCROLLING AND NOTHING TO TAP FIRST.
+//
+// The old board hid two thirds of the day behind three tab buttons. Asking a
+// 5-year-old to choose "Afternoon" is asking him to read a word he cannot read in
+// order to discover that chores he doesn't know about exist. Bands were meant to
+// answer "what do I do now"; a tab makes them ask it.
+//
+// So: every chore for today is on screen at once, grouped by routine band, and the
+// layout is *fitted* rather than scrolled. The band happening now is loudest,
+// finished bands collapse to a ticked strip, later bands sit back. Cards are grid
+// cells in a 100dvh box, and their art and type scale from the cell (container
+// query units) — so six chores or two, phone or wall, it fills the screen exactly
+// and never scrolls.
+// ----------------------------------------------------------------------------
 async function renderKidMode() {
   const mid = state.kidMode;
   const m = state.membersById[mid];
   if (!m) return exitKidMode();
   const mode = kidModeOf(m);
   const pre = mode === "prereader";
+  const wall = isWall();
   const todayKey = dateKey(new Date());
   const ws = new Date(); ws.setHours(0, 0, 0, 0);
   const we = new Date(ws); we.setDate(we.getDate() + 1);
@@ -3159,7 +3420,10 @@ async function renderKidMode() {
   let chores = [], doneMap = new Set(), board = [], rewards = [], err = "";
   try {
     const r = await fetchTasks(); if (r.error) throw r.error;
-    chores = (r.data || []).filter((t) => t.kind !== "task" && t.assigned_to === mid);
+    // theirs PLUS anything up for grabs — a child could always claim an unassigned
+    // chore from the list view, and Kid Mode replacing that view must not quietly
+    // take the option away
+    chores = (r.data || []).filter((t) => t.kind !== "task" && (t.assigned_to === mid || !t.assigned_to));
     doneMap = await fetchDoneMap(chores.map((t) => t.id));
     const [bd, rw] = await Promise.all([fetchLeaderboard(), fetchRewards()]);
     board = bd.data || []; rewards = rw.data || [];
@@ -3175,35 +3439,93 @@ async function renderKidMode() {
   const rows = [];
   for (const t of chores) for (const occ of todaysOccs(t, todayKey, ws, we))
     rows.push({ task: t, occ, done: isDone(t, occ), bonus: bonusMultiplier(t.id, occ ?? todayKey) > 1 });
-  state._kidRows = rows;
   const streak = streakFor(mid, chores, doneMap);
+  const nowBand = currentBand();
 
-  if (!state.kidBand) state.kidBand = currentBand();
-  const inBand = (r) => (bandOf(r.task) || "anytime") === state.kidBand || (!bandOf(r.task) && state.kidBand === currentBand());
-  // at most six cards; a 5-year-old given a wall of identical cards learns nothing
-  const shown = (pre ? rows.filter(inBand) : rows).slice(0, pre ? 6 : 12);
+  // ---- group into bands, in clock order. Nothing is hidden; empty bands vanish.
+  const groups = BAND_ORDER
+    .map((key) => ({ key, items: rows.filter((r) => (bandOf(r.task) || "anytime") === key) }))
+    .filter((g) => g.items.length)
+    .map((g) => {
+      const done = g.items.filter((r) => r.done).length;
+      const now = g.key === nowBand;
+      // "later" dims only what hasn't come round yet. A missed morning must NOT be
+      // dimmed — it is the most urgent thing on the screen, not the least.
+      return { ...g, done, total: g.items.length, finished: done === g.items.length, now,
+               // "Any time" is never later — it is always now, by definition
+               later: g.key !== "anytime" && BAND_ORDER.indexOf(g.key) > BAND_ORDER.indexOf(nowBand) };
+    });
 
-  // cheapest reward is the goal; the board is glyphs so it is countable on fingers
-  const goal = rewards.slice().sort((a, b) => a.star_cost - b.star_cost)[0];
-  const need = goal ? goal.star_cost : 3;
-  const boardN = Math.min(need, 5);
-  const filled = Math.min(boardN, Math.round((bal / Math.max(1, need)) * boardN));
-  const glyphs = Array.from({ length: boardN }, (_, i) => (i < filled ? "⭐" : "☆")).join("");
+  // one flat list so every tap target — full card or collapsed thumb — indexes the same way
+  const shown = groups.flatMap((g) => g.items);
+  state._kidRows = rows;
 
-  const card = (r, i) => {
-    const t = r.task, a = t.icon_url;
-    const art = a
-      ? (/^(https?:|data:)/.test(a) ? `<img class="kimg" src="${esc(a)}" alt="" />` : `<span class="kemo">${esc(a)}</span>`)
-      : `<span class="kemo">${esc((t.title || "?").trim()[0] || "?")}</span>`;
-    return `<div class="kcard${r.done ? " done" : ""}${r.bonus && !r.done ? " bonus" : ""}">
-      <button class="kmain" data-i="${i}" aria-pressed="${r.done}" aria-label="${esc(t.title)}">
-        ${art}<span class="ktitle">${esc(t.title)}</span>
-        ${r.done ? `<span class="kcheck">✓</span>` : ""}
-        ${r.bonus && !r.done ? `<span class="kbonus" title="Double stars today!">✨ ×2</span>` : ""}
-      </button>
-      <button class="kspeak" data-say="${esc(t.title)}" aria-label="Say ${esc(t.title)}">🔊</button>
-    </div>`;
-  };
+  // ---- fit, don't scroll. Columns are chosen so cards stay as large as the band
+  // allows; row weights hand the leftover height to the bands that still have work.
+  const maxCols = pre ? (wall ? 4 : 2) : (wall ? 6 : 3);
+  let idx = 0;
+  const bandHTML = groups.map((g) => {
+    const cols = Math.min(g.items.length, maxCols);
+    const rws = Math.ceil(g.items.length / cols);
+    const base = idx; idx += g.items.length;
+    g._weight = g.finished ? 0 : rws;               // finished bands take their natural height
+    const head = `<div class="kbhead">
+        <span class="kbico" aria-hidden="true">${BAND_ICON[g.key]}</span>
+        <span class="kbword">${BAND_WORD[g.key]}</span>
+        ${g.now && !g.finished ? `<span class="kbnow">← NOW</span>` : ""}
+        <span class="kbcount">${
+          // a pre-reader counts dots; "1/2" is both unreadable to him and, on a screen
+          // that deliberately shows no dates, indistinguishable from one
+          pre ? "●".repeat(g.done) + "○".repeat(g.total - g.done)
+              : (g.finished ? `${g.done} of ${g.total} ✓` : `${g.done} of ${g.total}`)
+        }${g.finished && pre ? " ✓" : ""}</span>
+      </div>`;
+    if (g.finished) {
+      const thumbs = g.items.map((r, i) => `
+        <button class="kthumb" data-i="${base + i}" aria-pressed="true"
+                aria-label="Undo ${esc(r.task.title)}">${kidArt(r.task, "kt")}<span class="ktick">✓</span></button>`).join("");
+      return `<section class="kband2 finished">${head}<div class="kthumbs">${thumbs}</div></section>`;
+    }
+    const cards = g.items.map((r, i) => kidCardHTML(r, base + i)).join("");
+    return `<section class="kband2${g.now ? " now" : ""}${g.later ? " later" : ""}">${head}
+      <div class="kbcards" style="--c:${cols};--r:${rws}">${cards}</div></section>`;
+  }).join("");
+
+  const gridRows = groups.map((g) => (g.finished ? "auto" : `${g._weight}fr`)).join(" ");
+
+  // ---- W15.4: what the stars are FOR. A balance is an abstraction; a picture of
+  // the ice cream with three empty stars beside it is a goal a 5-year-old can hold.
+  const byCost = rewards.slice().sort((a, b) => a.star_cost - b.star_cost);
+  const affordable = byCost.filter((r) => bal >= r.star_cost);
+  const best = affordable[affordable.length - 1] || null;
+  const goal = byCost.find((r) => r.star_cost > bal) || null;
+  const target = best || goal;
+  const prize = (() => {
+    if (!target) return `<div class="kprize empty"><span class="kpe">🎁</span>
+      <span class="kpt">Ask a grown-up to add a prize</span></div>`;
+    const ready = !!best;
+    const need = Math.max(0, (target.star_cost || 0) - bal);
+    const art = target.icon_url && isImgSrc(target.icon_url)
+      ? `<img class="kpimg" src="${esc(target.icon_url)}" alt="" />`
+      : `<span class="kpe">${esc(target.emoji || "🎁")}</span>`;
+    // pre-reader counts glyphs; a reader gets the number. Both see the same picture.
+    const meter = pre
+      ? `<span class="kpstars">${starGlyphs(bal, target.star_cost)}</span>`
+      // NEVER a raw balance in a fixed chip: one real balance here is 323,811,241
+      : `<span class="kpstars num">${ready ? "yours now" : `${need} more to go`}</span>`;
+    return `<div class="kprize${ready ? " ready" : ""}">
+      ${art}<span class="kpt">${esc(target.title)}</span>${meter}
+      ${ready ? `<button class="kpbtn" id="kidRedeem" data-r="${target.id}">Get it!</button>`
+              : `<span class="kpcost">${target.star_cost}⭐</span>`}</div>`;
+  })();
+
+  // the prize strip already shows `target`; the row is for the OTHER things they
+  // could have right now, not a second copy of the same reward
+  const alsoReady = affordable.filter((r) => !target || r.id !== target.id);
+  const readyMore = (!pre && alsoReady.length)
+    ? `<div class="kready">${alsoReady.slice(0, 3).map((r) => `
+        <button class="kreadyb" data-r="${r.id}">${esc(r.emoji || "🎁")} ${esc(r.title)} · −${r.star_cost}⭐</button>`).join("")}</div>`
+    : "";
 
   el.innerHTML = `
     <section class="kidwrap ${pre ? "pre" : "reader"}" style="--kid:${colorFor(m.color)};--kidt:${tintFor(m.color)}">
@@ -3211,51 +3533,152 @@ async function renderKidMode() {
         ${avatarHTML(m, "avatar")}
         <span class="kidname">${esc(m.name)}</span>
         ${streak >= 2 ? `<span class="kstreak" title="${streak} days in a row">🔥 ${streak}</span>` : ""}
-        <span class="kidstars">${pre ? glyphs : `${bal}⭐`}</span>
-        <button class="kidhome" id="kidExit" aria-label="Done">🏠</button>
+        <span class="kidstars" title="${bal} stars">${pre ? starGlyphs(bal, target ? target.star_cost : 5) : `${fmtStars(bal)}`}</span>
+        <button class="kidhome" id="kidExit" aria-label="Someone else's turn">⇄</button>
       </header>
-      ${pre ? `<div class="kbands">${BANDS.map(([b, label]) =>
-          `<button class="kband${state.kidBand === b ? " on" : ""}" data-b="${b}">${label}</button>`).join("")}</div>`
-        : `<div class="kprog"><i style="width:${rows.length ? Math.round(rows.filter(r=>r.done).length / rows.length * 100) : 0}%"></i>
-             <span>${rows.filter(r=>r.done).length} of ${rows.length}</span></div>`}
       ${err ? `<p class="err">${esc(err)}</p>` : ""}
-      <div class="kgrid">${shown.length ? shown.map(card).join("")
-        : `<p class="kdone">All done ${pre ? "🎉" : "— nice work 🎉"}</p>`}</div>
-      ${goal && bal >= goal.star_cost ? `<div class="kprize">
-        <span class="kpe">${esc(goal.emoji || "🎁")}</span><span>${esc(goal.title)}</span>
-        <button class="kpbtn" id="kidRedeem" data-r="${goal.id}">Get it!</button></div>` : ""}
+      <div class="kday" style="grid-template-rows:${gridRows || "1fr"}">
+        ${groups.length ? bandHTML : `<p class="kdone">All done ${pre ? "🎉" : "— nice work 🎉"}</p>`}
+      </div>
+      ${readyMore}
+      ${prize}
     </section>`;
 
   document.getElementById("kidExit").onclick = exitKidMode;
-  el.querySelectorAll(".kband").forEach((b) => { b.onclick = () => { state.kidBand = b.dataset.b; renderKidMode(); kidIdleArm(); }; });
-  el.querySelectorAll(".kspeak").forEach((b) => { b.onclick = () => { speak(b.dataset.say); kidIdleArm(); }; });
-  el.querySelectorAll(".kmain").forEach((b) => {
-    b.onclick = () => {
-      const r = shown[+b.dataset.i];
-      const cell = `${r.task.id}|${r.occ ?? ""}`;
-      if (choreCooldown(cell)) return;
-      kidIdleArm();
-      if (r.done) { enqueueUncomplete(r.task, r.occ, mid); renderKidMode(); flushQueue(); return; }
-      enqueueCompletion(r.task, r.occ, mid);
-      state.undone.delete(cell);
-      cardPop(b.closest(".kcard"));                        // local, ~500ms, non-blocking
-      if (r.task.star_reward > 0) starBurst(r.task.star_reward);
-      if (shown.length && shown.every((x) => x.done || x === r)) celebrate();
-      renderKidMode(); flushQueue();
-    };
+  el.querySelectorAll(".kspeak").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); speak(b.dataset.say); kidIdleArm(); };
   });
-  const rd = document.getElementById("kidRedeem");
-  if (rd) rd.onclick = async () => {
+  const toggle = (i, node) => {
+    const r = shown[i];
+    if (!r) return;
+    const cell = `${r.task.id}|${r.occ ?? ""}`;
+    if (choreCooldown(cell)) return;
+    kidIdleArm();
+    if (r.done) { enqueueUncomplete(r.task, r.occ, mid); renderKidMode(); flushQueue(); return; }
+    enqueueCompletion(r.task, r.occ, mid);
+    state.undone.delete(cell);
+    cardPop(node.closest(".kcard") || node);            // local, ~500ms, non-blocking
+    if (r.task.star_reward > 0) starBurst(r.task.star_reward);
+    if (shown.length && shown.every((x) => x.done || x === r)) celebrate();
+    renderKidMode(); flushQueue();
+  };
+  kidFit();
+  el.querySelectorAll(".kmain").forEach((b) => { b.onclick = () => toggle(+b.dataset.i, b); });
+  el.querySelectorAll(".kthumb").forEach((b) => { b.onclick = () => toggle(+b.dataset.i, b); });
+
+  const redeem = async (rewardId) => {
     if (!(await requirePin("modify"))) return;             // the one irreversible action
-    const { error } = await supabase.rpc("redeem_reward", { p_member: mid, p_reward: rd.dataset.r });
+    const { error } = await supabase.rpc("redeem_reward", { p_member: mid, p_reward: rewardId });
     if (error) return toast(/insufficient_stars/.test(error.message) ? "Not enough stars yet."
       : /reward_free/.test(error.message) ? "That reward costs 0 stars — ask a grown-up."
       : /too_many_pending/.test(error.message) ? "Already waiting for a grown-up on that one."
       : error.message);
     celebrate(); renderKidMode();
   };
+  const rd = document.getElementById("kidRedeem");
+  if (rd) rd.onclick = () => redeem(rd.dataset.r);
+  el.querySelectorAll(".kreadyb").forEach((b) => { b.onclick = () => redeem(b.dataset.r); });
 }
 
+// ----------------------------------------------------------------------------
+// The column counts chosen during render are a guess made without knowing how much
+// height each band actually got. This measures the laid-out board and trades rows
+// for columns until every card clears the 56 px accessible-kiosk floor — the number
+// that makes the difference between a 5-year-old hitting the chore he meant and
+// hitting the one next to it. Wider-and-shorter always beats smaller-and-square.
+// Runs once after paint; converges in a couple of passes because reducing rows only
+// ever frees height.
+// ----------------------------------------------------------------------------
+const KID_CARD_FLOOR = 56;
+function kidFit() {
+  const day = el.querySelector(".kday");
+  if (!day || !day.clientHeight) return;
+  const bands = [...day.querySelectorAll(".kband2")];
+  const open = bands.filter((b) => !b.classList.contains("finished"));
+  if (!open.length) return;
+
+  const cs = getComputedStyle(day);
+  const gap = parseFloat(cs.rowGap) || 8;
+  const fixed = bands.filter((b) => b.classList.contains("finished"))
+    .reduce((s, b) => s + b.getBoundingClientRect().height, 0);
+  const free = day.clientHeight - fixed - gap * Math.max(0, bands.length - 1);
+  if (free <= 0) return;
+
+  const meta = open.map((b) => {
+    const cards = b.querySelector(".kbcards");
+    const bs = getComputedStyle(b);
+    const head = b.querySelector(".kbhead");
+    // in the short-viewport layout the label sits BESIDE the cards, so it costs no height
+    const sideLabel = bs.gridTemplateColumns.split(" ").length > 1;
+    const chrome = parseFloat(bs.paddingTop) + parseFloat(bs.paddingBottom)
+      + parseFloat(bs.borderTopWidth) + parseFloat(bs.borderBottomWidth)
+      + (sideLabel ? 0 : head.getBoundingClientRect().height + (parseFloat(bs.rowGap) || 6));
+    return { b, cards, n: cards.children.length, chrome,
+             cardGap: parseFloat(getComputedStyle(cards).rowGap) || 10,
+             rows: Math.max(1, +cards.style.getPropertyValue("--r") || 1) };
+  });
+
+  // Every band pays a FIXED cost — its header, padding and border — no matter how
+  // many rows of cards it holds. Splitting the free height by row count alone
+  // therefore starves the short bands: a 1-row band and a 2-row band were charged
+  // 1fr and 2fr, but the 1-row band still owed 47px of chrome, so its cards came out
+  // at 43px while the tall band's sat at 61. Solve for a single card height shared by
+  // every band instead, then give each band exactly what that costs it.
+  const cardHeight = () => {
+    const rows = meta.reduce((s, m) => s + m.rows, 0) || 1;
+    const overhead = meta.reduce((s, m) => s + m.chrome + (m.rows - 1) * m.cardGap, 0);
+    return (free - overhead) / rows;
+  };
+  let h = cardHeight();
+  for (let pass = 0; pass < 12 && h < KID_CARD_FLOOR; pass++) {
+    // trade a row for columns on whichever band is tallest — that frees the most height
+    const tallest = meta.filter((m) => m.rows > 1).sort((a, b) => b.rows - a.rows)[0];
+    if (!tallest) break;                       // one row each: this is as big as it gets
+    tallest.rows--;
+    h = cardHeight();
+  }
+
+  // hand the real card height to CSS: the photo, the glyph and the label all scale
+  // from it, so a 220px card gets 220px-worth of picture and a 60px one doesn't
+  day.style.setProperty("--kh", `${Math.max(24, h).toFixed(2)}px`);
+  for (const m of meta) {
+    m.cards.style.setProperty("--c", Math.ceil(m.n / m.rows));
+    m.cards.style.setProperty("--r", m.rows);
+    m.px = Math.max(0, m.chrome + m.rows * h + (m.rows - 1) * m.cardGap);
+  }
+  day.style.gridTemplateRows = bands.map((b) => {
+    if (b.classList.contains("finished")) return "auto";
+    const m = meta.find((x) => x.b === b);
+    return m ? `${m.px.toFixed(2)}px` : "1fr";
+  }).join(" ");
+}
+
+// art for a kid card: uploaded photo, chosen emoji, or the first letter as a last resort
+function kidArt(t, cls) {
+  const a = t.icon_url;
+  if (a && isImgSrc(a)) return `<img class="kimg ${cls || ""}" src="${esc(a)}" alt="" />`;
+  if (a) return `<span class="kemo ${cls || ""}">${esc(a)}</span>`;
+  return `<span class="kemo ${cls || ""}">${esc(avatarInitial(t.title))}</span>`;
+}
+
+// Countable, not readable: at most 5 glyphs so a 5-year-old can check them on fingers.
+function starGlyphs(have, need) {
+  const n = Math.max(1, Math.min(5, need || 5));
+  const filled = Math.max(0, Math.min(n, Math.round((have / Math.max(1, need || 5)) * n)));
+  return "⭐".repeat(filled) + "☆".repeat(n - filled);
+}
+
+function kidCardHTML(r, i) {
+  const t = r.task;
+  return `<div class="kcard${r.done ? " done" : ""}${r.bonus && !r.done ? " bonus" : ""}">
+    <button class="kmain" data-i="${i}" aria-pressed="${r.done}" aria-label="${esc(t.title)}">
+      ${kidArt(t)}<span class="ktitle">${esc(t.title)}</span>
+      ${r.done ? `<span class="kcheck">✓</span>` : ""}
+      ${r.bonus && !r.done ? `<span class="kbonus" title="Double stars today!">✨ ×2</span>` : ""}
+    </button>
+    <button class="kspeak" data-say="${esc(t.title)}" aria-label="Say ${esc(t.title)}">🔊</button>
+  </div>`;
+}
 // Card-local, ~500ms. Animated feedback cut children's uncertain re-taps from 238 to 21
 // (Woodward et al., CHI 2016) — this is error prevention, not decoration. Kept short and
 // local because the same study found heavy animation SLOWED 5-6 year olds.
@@ -3292,8 +3715,8 @@ function openTaskForm(task, presetAssignee) {
         <select id="t_who">${memberOpts}</select>
         <label>Due date${rui.freq !== "none" ? " (first occurrence)" : ""}</label>
         <input id="t_due" type="date" value="${esc(task?.due_date || "")}" />
-        <label>Icon <span class="hint" style="display:inline">emoji, or a photo URL — a photo of your own bed beats any glyph</span></label>
-        <input id="t_icon" maxlength="400" value="${esc(task?.icon_url || "")}" placeholder="🛏️  or  https://…/bed.jpg" />
+        <label>Picture</label>
+        ${iconFieldHTML(task?.icon_url || "", "t_icon")}
         <label>When</label>
         <select id="t_band">
           <option value=""${!task?.time_band ? " selected" : ""}>Anytime</option>
@@ -3314,6 +3737,7 @@ function openTaskForm(task, presetAssignee) {
   const close = () => overlay.remove();
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   document.getElementById("tClose").onclick = close;
+  wireIconField(overlay, "t_icon");
   const readRecur = wireRecur(overlay).read;
 
   document.getElementById("taskForm").addEventListener("submit", async (e) => {
@@ -3358,7 +3782,7 @@ const fetchLeaderboard = () => supabase.from("family_members")
   .select("id,name,color,is_child,star_balance")
   .order("star_balance", { ascending: false }).order("sort_order", { ascending: true });
 const fetchRewards = () => supabase.from("rewards")
-  .select("id,title,emoji,star_cost,is_active").eq("is_active", true)
+  .select("id,title,emoji,star_cost,is_active,icon_url").eq("is_active", true)
   .order("star_cost", { ascending: true });
 const createReward = (p) => supabase.from("rewards").insert({ family_id: state.familyId, is_active: true, ...p }).select().single();
 const updateReward = (id, p) => supabase.from("rewards").update(p).eq("id", id).select().single();
@@ -3366,9 +3790,9 @@ const deactivateReward = (id) => supabase.from("rewards").update({ is_active: fa
 const fetchPendingRedemptions = () => supabase.from("redemptions")
   .select("id,reward_id,member_id,star_cost,status,created_at").eq("status", "pending")
   .order("created_at", { ascending: true });
-const fetchRedemptions = (memberId) => supabase.from("redemptions")
-  .select("id,reward_id,star_cost,status,created_at").eq("member_id", memberId)
-  .order("created_at", { ascending: false }).limit(20);
+// W15.6 — the per-member redemption history is gone from the UI. The rows stay:
+// star_ledger references them, so deleting would break the audit trail that makes
+// "where did 40 stars go" answerable. Nothing displays them; nothing fetches them.
 
 // ---- Realtime (live leaderboard / balance across devices) ------------------
 function teardownRealtime() {
@@ -3490,11 +3914,11 @@ async function viewRewards() {
 
 async function renderRewards() {
   const member = state.member;
-  let rewards = [], board = [], reds = [], err = "";
+  let rewards = [], board = [], err = "";
   try {
-    const [rw, bd, rd] = await Promise.all([fetchRewards(), fetchLeaderboard(), fetchRedemptions(member.id)]);
-    if (rw.error) throw rw.error; if (bd.error) throw bd.error; if (rd.error) throw rd.error;
-    rewards = rw.data || []; board = bd.data || []; reds = rd.data || [];
+    const [rw, bd] = await Promise.all([fetchRewards(), fetchLeaderboard()]);
+    if (rw.error) throw rw.error; if (bd.error) throw bd.error;
+    rewards = rw.data || []; board = bd.data || [];
   } catch (e) { err = e.message || String(e); }
   const me = board.find((m) => m.id === member.id) || { star_balance: 0 };
   const bal = me.star_balance;
@@ -3511,8 +3935,6 @@ async function renderRewards() {
       ${err ? `<p class="err">${esc(err)}</p>` : ""}
       <div class="rewardgrid" id="rewardgrid"></div>
       <button class="ghost" id="addReward" style="margin-top:14px">+ Add reward</button>
-      <h4 class="lbh">Your redemptions</h4>
-      <div class="redlist" id="redlist"></div>
       <div class="row"><button class="link" id="signout">Sign out</button></div>
     </section>`;
   document.getElementById("back").onclick = () => go("#/stars");
@@ -3549,12 +3971,6 @@ async function renderRewards() {
     };
   });
   grid.querySelectorAll(".rwedit").forEach((b) => { b.onclick = () => openRewardForm(rewardsById[b.dataset.id]); });
-
-  const rl = document.getElementById("redlist");
-  rl.innerHTML = reds.length ? reds.map((x) => {
-    const rw = rewardsById[x.reward_id];
-    return `<div class="redrow"><span>${rw ? esc(rw.title) : "Reward"}</span><span class="redcost">⭐${x.star_cost}</span><span class="redstatus s-${esc(x.status)}">${esc(x.status)}</span></div>`;
-  }).join("") : `<p class="sub">No redemptions yet.</p>`;
 }
 
 function openRewardForm(reward) {
@@ -3574,7 +3990,9 @@ function openRewardForm(reward) {
         <label>Title</label>
         <input id="rw_title" required value="${esc(reward?.title || "")}" placeholder="Game hour" />
         <label>Star cost</label>
-        <input id="rw_cost" type="number" min="0" step="1" value="${Number.isFinite(reward?.star_cost) ? reward.star_cost : 10}" />
+        <input id="rw_cost" type="number" min="1" step="1" value="${Number.isFinite(reward?.star_cost) ? reward.star_cost : 10}" />
+        <label>Picture <span class="hint" style="display:inline">what the child is saving toward — a photo of the actual thing</span></label>
+        ${iconFieldHTML(reward?.icon_url || "", "rw_icon")}
         <div class="err" id="rwErr"></div>
       </div>
       ${isEdit ? `<div class="modal-foot"><button type="button" class="danger" id="rwDelete">Remove reward</button></div>` : ""}
@@ -3583,6 +4001,7 @@ function openRewardForm(reward) {
   const close = () => overlay.remove();
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   document.getElementById("rwClose").onclick = close;
+  wireIconField(overlay, "rw_icon");
 
   document.getElementById("rwForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -3590,10 +4009,12 @@ function openRewardForm(reward) {
     const title = document.getElementById("rw_title").value.trim();
     if (!title) { err.textContent = "Title is required."; return; }
     let star_cost = parseInt(document.getElementById("rw_cost").value, 10);
-    if (!Number.isFinite(star_cost) || star_cost < 0) star_cost = 0;
+    // a 0-star reward is infinitely redeemable — the RPC rejects it, so say so here
+    if (!Number.isFinite(star_cost) || star_cost < 1) { err.textContent = "A reward needs to cost at least 1 star."; return; }
     const emoji = document.getElementById("rw_emoji").value.trim() || null;
+    const icon_url = document.getElementById("rw_icon").value.trim() || null;
     const save = document.getElementById("rwSave"); save.disabled = true; save.textContent = "Saving…";
-    const payload = { title, emoji, star_cost };
+    const payload = { title, emoji, star_cost, icon_url };
     const res = isEdit ? await updateReward(reward.id, payload) : await createReward(payload);
     if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
     close(); render();
