@@ -792,7 +792,9 @@ function openMemberForm(member) {
           <option value="reader"${cur.chore_mode === "reader" ? " selected" : ""}>Reader — today's list</option>
           <option value="adult"${cur.chore_mode === "adult" ? " selected" : ""}>Grown-up</option>
         </select>
-        <p class="hint">Pre-reader mode shows one routine band at a time with no dates.</p>
+        <p class="hint">Pre-reader shows big picture cards with a read-aloud button and no
+          dates or times. Leave on Auto and a kid gets the reader board — set it explicitly
+          for a child who can't read yet.</p>
         <div class="err" id="mErr"></div>
       </div>
     </form>`;
@@ -2928,16 +2930,26 @@ async function renderChoreWall() {
   const streaks = {};
   for (const m of state.members) if (m.is_child) streaks[m.id] = streakFor(m.id, chores, doneMap);
 
+  // W15.9 (P3/F11b) — "bigger icons, the person's colour, less spreadsheet". The old row
+  // was a 24px tick, a 16px glyph and a title squeezed into whatever was left, which in
+  // a 200px column wrapped "take bins out" onto three lines. The picture is now a 38px
+  // tile carrying the owner's tint, the row carries their ink down its left edge, and
+  // the tick moved onto the tile as a corner badge so the title gets that width back.
+  // Done still shows THREE redundant signals: the badge, the desaturated picture, and
+  // the struck-through recessed row.
   const rowHTML = (r) => {
     const i = rows.indexOf(r);
+    const owner = r.owner ? state.membersById[r.owner] : null;
+    const ink = owner ? colorFor(owner.color) : "var(--slate)";
+    const tint = owner ? tintFor(owner.color) : "var(--panel2)";
+    const stars = r.task.star_reward
+      ? `<span class="cpts${r.bonus && !r.done ? " bonus" : ""}">${r.bonus && !r.done
+          ? `✨ ${r.task.star_reward * 2}⭐` : `${r.task.star_reward}⭐`}</span>` : "";
     return `<div class="crow">
-      <button class="citem${r.done ? " done" : ""}" data-i="${i}" aria-pressed="${r.done}">
-        <span class="ctick">${r.done ? "✓" : ""}</span>
-        ${iconHTML(r.task)}
-        <span class="clbl">${esc(r.task.title)}</span>
-        ${r.task.star_reward
-          ? `<span class="cpts${r.bonus && !r.done ? " bonus" : ""}">${r.bonus && !r.done
-              ? `✨${r.task.star_reward * 2}⭐` : `${r.task.star_reward}⭐`}</span>` : ""}
+      <button class="citem${r.done ? " done" : ""}" data-i="${i}" aria-pressed="${r.done}"
+              style="--own:${ink};--ownt:${tint}">
+        <span class="ctile">${iconHTML(r.task)}<span class="ctick">${r.done ? "✓" : ""}</span></span>
+        <span class="ctxt"><span class="clbl">${esc(r.task.title)}</span>${stars}</span>
       </button>
       ${meIsKid ? "" : `<button class="cedit" data-i="${i}" title="Edit ${esc(r.task.title)}"
          aria-label="Edit ${esc(r.task.title)}">✏️</button>`}
@@ -3437,7 +3449,13 @@ async function viewCountdowns() {
 // returns to the wall. The PIN guards only redemption.
 // ============================================================================
 const KID_IDLE_MS = 60000;
-const kidModeOf = (m) => m.chore_mode || (m.is_child ? (m.name && /doma/i.test(m.name) ? "prereader" : "reader") : "adult");
+// W15.9 — chore_mode is set explicitly on every member now, so the fallback no longer
+// guesses from the NAME. That guess ("does this name contain 'doma'?") was a scaffold
+// from the first Kid Mode build that survived far longer than it should have: renaming
+// a child would silently have moved him to the reader board, and nothing would have
+// said so. An unset mode now falls back on is_child alone, which is at least a fact
+// about the member rather than a fact about their spelling.
+const kidModeOf = (m) => m.chore_mode || (m.is_child ? "reader" : "adult");
 const currentBand = () => { const h = new Date().getHours(); return h < 12 ? "morning" : h < 17 ? "afternoon" : "evening"; };
 
 function speak(text) {

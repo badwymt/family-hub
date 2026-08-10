@@ -756,22 +756,34 @@ button.finrow:hover{ border-color:var(--accent); }
     letter-spacing:.6px; margin:10px 0 5px; }
   /* ONE tap target per row, 56px = 21.3mm on this panel — the accessible-kiosk floor
      and the minimum anything a child taps may be. */
-  .citem{ display:flex; align-items:center; gap:9px; width:100%; text-align:left;
-    background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:10px;
-    margin-bottom:6px; font-size:12.5px; min-height:56px; color:var(--text); }
-  .ccol.grab .citem{ border-style:dashed; }
-  .citem:hover{ border-color:var(--accent); }
-  .ctick{ width:24px; height:24px; border-radius:50%; border:2px solid var(--line); flex:0 0 24px;
-    display:grid; place-items:center; font-size:13px; color:#fff; pointer-events:none; }
-  /* done = three redundant signals: tick fills, icon dims, row recedes + strikes */
-  .citem.done{ opacity:.5; }
-  .citem.done .ctick{ background:var(--green); border-color:var(--green); }
+  /* W15.9 (P3/F11b) — the row gets presence: a real picture tile, the owner's colour
+     down the edge, and the title no longer fighting a tick and a glyph for width. */
+  .citem{ display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--own,var(--slate));
+    border-radius:12px; padding:8px 10px; min-height:58px; color:var(--text); }
+  .ccol.grab .citem{ border-style:dashed; border-left-style:solid; }
+  .citem:hover{ border-color:var(--accent); border-left-color:var(--own,var(--accent)); }
+  /* the picture, at a size a person can actually recognise across a kitchen */
+  .ctile{ position:relative; width:38px; height:38px; flex:0 0 38px; border-radius:11px;
+    background:var(--ownt,var(--panel2)); display:grid; place-items:center; pointer-events:none; }
+  .ctile .cico{ font-size:22px; line-height:1; }
+  .ctile .cico img{ width:38px; height:38px; border-radius:11px; object-fit:cover; display:block; }
+  .ctile .cico-none{ width:14px; height:14px; background:var(--own,var(--line)); opacity:.45; }
+  /* the tick rides the tile instead of taking a column of its own */
+  /* undone reads as an EMPTY checkbox, not a filled dot — a grey disc bottom-right of
+     the tile looked like a bullet, which says nothing about state */
+  .ctick{ position:absolute; right:-5px; bottom:-5px; width:19px; height:19px; border-radius:50%;
+    background:var(--panel); border:2px solid var(--line); box-shadow:0 0 0 2px var(--panel);
+    color:#fff; font-size:12px; font-weight:900; display:grid; place-items:center; line-height:1; }
+  .ctxt{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; pointer-events:none; }
+  .clbl{ font-size:13.5px; font-weight:700; line-height:1.2;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .cpts{ font-size:11px; font-weight:800; color:var(--star); align-self:flex-start; }
+  /* done = three signals, never colour alone */
+  .citem.done{ opacity:.55; background:var(--panel2); }
+  .citem.done .ctick{ background:var(--pos); border-color:var(--pos); }
   .citem.done .clbl{ text-decoration:line-through; }
   .citem.done .cico{ filter:grayscale(1); }
-  .cico{ font-size:18px; flex:0 0 auto; pointer-events:none; }
-  .cico img{ width:26px; height:26px; border-radius:6px; object-fit:cover; display:block; }
-  .clbl{ flex:1; font-weight:600; pointer-events:none; }
-  .cpts{ font-size:11px; font-weight:800; color:var(--star); pointer-events:none; }
 }
 
 /* ==========================================================================
@@ -1078,7 +1090,7 @@ html.kidmode #app{ height:100dvh; overflow:hidden; }
   /* a chore row is now [tap to toggle][edit] — the wall had no edit path at all */
   .crow{ display:flex; align-items:stretch; gap:4px; margin-bottom:6px; }
   .crow .citem{ flex:1; margin-bottom:0; min-width:0; }
-  .cedit{ flex:0 0 auto; width:44px; min-height:56px; background:transparent; border:1px solid var(--line);
+  .cedit{ flex:0 0 auto; width:34px; min-height:58px; background:transparent; border:1px solid var(--line);
     border-radius:11px; font-size:15px; padding:0; color:var(--muted); }
   .cedit:hover{ border-color:var(--accent); background:var(--panel); }
   .cadd{ flex:0 0 auto; width:32px; height:32px; min-height:0; padding:0; border-radius:9px;

@@ -11,8 +11,17 @@ Thumbs.db
 *.local
 
 # sandbox scratch (not part of the app)
-*.mjs
+# NOTE: this used to be a blanket `*.mjs`, which silently excluded the entire test
+# suite — test/README.md documented four harnesses the repo did not contain. The
+# harnesses ARE the proof the app works; they belong in version control. Only genuine
+# scratch is ignored now, by name.
+test/_*.mjs
+test/dbg*.mjs
+test/diag.mjs
 node_modules/
 _to_delete/
-node_modules/
 test/shots/
+
+# working files from a Cowork session, not part of the app
+*.patch
+finish-*.sh

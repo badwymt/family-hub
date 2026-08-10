@@ -9,8 +9,8 @@ export const DB = {
   family_members: [
     { id:"m-dad",  family_id:"fam1", name:"🥸 Daddy", color:"teal",  avatar_url:null, is_child:false, star_balance:0,  sort_order:1 },
     { id:"m-suzy", family_id:"fam1", name:"Suzy 👩",  color:"red",   avatar_url:null, is_child:false, star_balance:0,  sort_order:2 },
-    { id:"m-nono", family_id:"fam1", name:"Nono ⛹️‍♂️", color:"blue",  avatar_url:null, is_child:true,  star_balance:323811241, sort_order:3 },
-    { id:"m-doma", family_id:"fam1", name:"Doma ⛹️‍♂️", color:"green", avatar_url:null, is_child:true,  star_balance:18, sort_order:4 },
+    { id:"m-nono", family_id:"fam1", name:"Nono ⛹️‍♂️", color:"blue",  avatar_url:null, is_child:true,  chore_mode:"reader",    star_balance:323811241, sort_order:3 },
+    { id:"m-doma", family_id:"fam1", name:"Doma ⛹️‍♂️", color:"green", avatar_url:null, is_child:true,  chore_mode:"prereader", star_balance:18, sort_order:4 },
   ],
   tasks: [
     { id:"t-bed",   family_id:"fam1", assigned_to:"m-doma", title:"clean up bed", icon_url:"🛏️", time_band:"morning", star_reward:5, due_date:dk(shift(-3)), due_time:"08:00", kind:"chore", rrule:"FREQ=DAILY", exdates:[], is_active:true, created_at:iso(shift(-9)) },
