@@ -11,11 +11,12 @@ node test/run.mjs      # 205 assertions — exits non-zero on any failure
 node test/ux.mjs       # 134 journey steps: every fix walked as a real person
 node test/fit.mjs      # 260 fit checks: Kid Mode must never scroll, on any surface
 node test/icon.mjs     # 21 checks on the chore/reward picture field
+node test/net.mjs      # 20 transport checks: a dropped save must not cost the form
 node test/palette.mjs  # contrast + identity separation; fails on regression
 node test/shot.mjs     # writes test/shots/*.png at 1280x720 and 390x844
 ```
 
-Run all five before pushing. They take a few minutes together.
+Run all six before pushing. They take a few minutes together.
 
 If Playwright's bundled Chromium is missing, point it at the system one:
 `chromium.launch({ executablePath: "/opt/pw-browsers/chromium" })` (already set).
@@ -34,6 +35,10 @@ If Playwright's bundled Chromium is missing, point it at the system one:
   order/limit/single/insert/update/delete`) over fixture tables, plus fake `auth`,
   `rpc` (recorded in `CALLS.rpc`) and `channel`. Fixtures are relative to *today*, so
   "today only" assertions stay true whenever you run them.
+- `net.mjs` opts into `window.__NET_PROBE`, which makes the stub issue a REAL request
+  through the app's own injected fetch before answering from memory. Without it the stub
+  replaces the whole client and the transport is never exercised — which is precisely how
+  a phone came to show a person `TypeError: Load failed` and lose a half-typed event.
 - `rrule.bundle.js` is the real rrule, esbuild-bundled — recurrence is never stubbed,
   because getting occurrence expansion wrong is exactly the failure mode we're testing.
 

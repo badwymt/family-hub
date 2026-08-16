@@ -265,6 +265,10 @@ const WALL = { width:1280, height:720 }, PHONE = { width:390, height:844 };
   ok("W4 tap completes", await page.locator('.ccol[data-col="m-doma"] .citem', { hasText:"clean up bed" }).first()
      .evaluate(n=>n.classList.contains("done")));
   const afterDone = await page.evaluate(()=>window.__DB?.family_members?.find(m=>m.id==="m-doma")?.star_balance);
+  // t-bed pays star_reward x bonus_multiplier(), and the multiplier is derived from
+  // (task id + date) — so on roughly one day in five it is 2. Hard-coding 5 here made
+  // the suite fail for a whole day at a time while the app was behaving correctly.
+  const awarded = await page.evaluate(()=>(window.__DB.task_completions.find(c=>c.task_id==="t-bed")||{}).star_awarded||0);
   await page.waitForTimeout(1600);   // clear the 1.5s cooldown
   await page.locator('.ccol[data-col="m-doma"] .citem', { hasText:"clean up bed" }).first().click();
   await page.waitForTimeout(700);
@@ -278,7 +282,8 @@ const WALL = { width:1280, height:720 }, PHONE = { width:390, height:844 };
     undo: window.__DB.star_ledger.filter(l=>l.reason==="chore_undo").length,
   }));
   ok("W4 undo removed the completion", st.completions===0, JSON.stringify(st));
-  ok("W4 undo reversed the stars", st.bal===afterDone-5, JSON.stringify(st));
+  ok("W4 undo reversed the stars", st.bal===afterDone-awarded, JSON.stringify({...st,awarded}));
+  ok("W4 undo left the ledger balanced", st.ledger===0, JSON.stringify({...st,awarded}));
   ok("W4 undo wrote a chore_undo ledger row", st.undo===1, JSON.stringify(st));
   ok("W4 ledger still reconciles with the cached balance", st.bal===18+st.ledger-18+0 || true);
 

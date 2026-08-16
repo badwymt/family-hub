@@ -337,8 +337,13 @@ try{
        after===before+paid.base*paid.mult, `${before}->${after} (base ${paid.base} x${paid.mult})`);
     await page.waitForTimeout(1700);
     // the band may have collapsed on completion — undo from wherever the card went
+    // the band collapses to thumbs once it is finished; undo THIS chore, not
+    // whichever thumb happens to sort last (that undid a different, cheaper chore
+    // and made this assertion fail on every bonus day)
     const back=page.locator(".kcard",{hasText:"clean up bed"}).first();
+    const thumb=page.locator('.kthumb[aria-label*="clean up bed" i]').first();
     if (await back.count()) await back.locator(".kmain").click();
+    else if (await thumb.count()) await thumb.click();
     else await page.locator(".kthumb").last().click();
     await page.waitForTimeout(700);
     const undone=await page.evaluate(()=>window.__DB.family_members.find(m=>m.id==="m-doma").star_balance);

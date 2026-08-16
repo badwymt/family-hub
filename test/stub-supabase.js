@@ -83,22 +83,50 @@ class Q {
   _rows(){ let rs=(DB[this.t]||[]).slice(); for(const f of this.f) rs=rs.filter(f);
     for(const [c,asc] of this.ord.slice().reverse()) rs.sort((a,b)=>(asc?1:-1)*cmp(a[c],b[c]));
     if(this._lim!=null) rs=rs.slice(0,this._lim); return rs; }
-  then(res){
+  then(res, rej){ return this._exec().then(res, rej); }
+  async _exec(){
+    try { await probe(this.t, this._mode === "select" ? "GET" : "POST"); }
+    catch (e) { return asFetchError(e); }
     let data, error=null;
     try {
       if(this._mode==="insert"){ const arr=Array.isArray(this._payload)?this._payload:[this._payload];
         const made=arr.map((p,i)=>({ id:`new-${this.t}-${(DB[this.t]||[]).length+i}`, ...p }));
+        // a client-minted id that is already taken is a primary-key conflict, exactly
+        // as Postgres would report it — this is how a replayed write is caught
+        const clash=made.find(m=>(DB[this.t]||[]).some(r=>r.id===m.id));
+        if(clash) return { data:null, error:{ code:"23505", message:`duplicate key value violates unique constraint "${this.t}_pkey"` } };
         DB[this.t]=(DB[this.t]||[]).concat(made); data=made; }
       else if(this._mode==="update"){ const hit=this._rows(); hit.forEach(r=>Object.assign(r,this._payload)); data=hit; }
       else if(this._mode==="delete"){ const hit=this._rows(); DB[this.t]=(DB[this.t]||[]).filter(r=>!hit.includes(r)); data=hit; }
       else data=this._rows();
       if(this._single) data = data[0] ?? (this._single==="maybe" ? null : null);
     } catch(e){ error={message:String(e)}; data=null; }
-    return Promise.resolve({ data, error }).then(res);
+    return { data, error };
   }
 }
 if (typeof window !== 'undefined') { window.__DB = DB; window.__CALLS = CALLS; }
-export function createClient(){
+
+// ---- transport probe --------------------------------------------------------
+// The stub replaces the whole client, which means the app's own fetch (and therefore
+// its retry / offline / error-wording behaviour) is normally never exercised — which
+// is exactly how "TypeError: Load failed" reached a phone. Opt in with
+// `window.__NET_PROBE = true` and every query first makes a REAL request through the
+// app's injected fetch, so a test can fail it at the network layer.
+let TRANSPORT = null;
+async function probe(table, method) {
+  if (typeof window === "undefined" || !window.__NET_PROBE || !TRANSPORT) return;
+  await TRANSPORT(`${location.origin}/__net/${table}`, {
+    method, headers: { "content-type": "application/json" },
+    body: method === "GET" ? undefined : "{}",
+  });
+}
+const asFetchError = (e) => ({ data: null, error: { message: String((e && e.message) || e), details: "", code: "" } });
+
+export function createClient(_url, _key, opts){
+  TRANSPORT = (opts && opts.global && opts.global.fetch) || (typeof fetch === "function" ? fetch : null);
+  return _mkClient();
+}
+function _mkClient(){
   return {
     auth: {
       getSession: async () => ({ data:{ session:{ access_token:"tok", user:{ id:"u1" } } } }),
@@ -120,6 +148,7 @@ export function createClient(){
       }),
     },
     rpc: async (name, args) => {
+      try { await probe(`rpc/${name}`, "POST"); } catch (e) { return asFetchError(e); }
       CALLS.rpc.push({ name, args });
       const mem = (id) => DB.family_members.find(m=>m.id===id);
       if (name==="has_family_pin") return { data: !!DB._pin, error:null };

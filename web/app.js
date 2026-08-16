@@ -2,8 +2,68 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { RRule } from "https://esm.sh/rrule@2.8.1";
 import { SUPABASE_URL, SUPABASE_ANON_KEY, SHARED_EMAIL, VAPID_PUBLIC_KEY } from "./config.js";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// ---- resilient transport ---------------------------------------------------
+// A phone can have its network stack suspended out from under the page: iOS freezes a
+// backgrounded or Low-Power-Mode tab, and a fetch issued in that state rejects with a
+// bare `TypeError: Load failed` BEFORE the request ever leaves the device. That is what
+// lost a half-typed event on 2026-08-15 — the Supabase edge and Postgres logs show the
+// POST never arrived, while GETs a minute either side succeeded. One dropped request
+// should never cost someone their form, so retry the network-class failures.
+const NET_ERR_RE = /load failed|failed to fetch|networkerror|network( |-)?error|connection|timed? ?out|offline/i;
+const isNetworkError = (e) => {
+  if (!e) return false;
+  if (e.name === "AbortError") return false;              // a real cancellation, not a drop
+  return e instanceof TypeError || NET_ERR_RE.test(String(e.message || e));
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// User-facing text. "TypeError: Load failed" tells a parent in a kitchen nothing.
+const niceErr = (e) => {
+  const m = String((e && e.message) || e || "Something went wrong.");
+  if (isNetworkError(e) || NET_ERR_RE.test(m)) {
+    return navigator.onLine === false
+      ? "You're offline — reconnect and tap Save again. Nothing was lost."
+      : "Couldn't reach the server. Check your connection and tap Save again.";
+  }
+  return m;
+};
+
+async function resilientFetch(input, init) {
+  const attempts = 3;
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fetch(input, init);
+    } catch (e) {
+      last = e;
+      if (!isNetworkError(e) || i === attempts - 1) break;
+      await sleep(300 * Math.pow(3, i));                   // 300ms, then 900ms
+    }
+  }
+  throw last;
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { fetch: resilientFetch } });
 const MEMBER_KEY = "fh_current_member";
+
+// A retried write can still land twice if the first attempt reached the server but the
+// reply was lost coming back. Minting the row id on the client makes that retry collide
+// with itself (23505) instead of quietly creating a second row.
+const newId = () => {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};
+const isDuplicateKey = (e) => !!e && (e.code === "23505" || /duplicate key|already exists/i.test(e.message || ""));
+async function insertOnce(table, payload) {
+  const row = { id: newId(), ...payload };
+  const res = await supabase.from(table).insert(row).select().single();
+  if (res.error && isDuplicateKey(res.error)) {
+    return await supabase.from(table).select("*").eq("id", row.id).single();   // our own retry won
+  }
+  return res;
+}
 
 // W1: ink + tint pairs. Solid saturated blocks turn to mud at four metres; a pale
 // tint with a 3px ink edge stays legible. Every pill, chip and avatar draws from here.
@@ -173,7 +233,7 @@ async function enableReminders() {
       { family_id: state.familyId, member_id: (state.member && state.member.id) || null, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth },
       { onConflict: "endpoint" }
     );
-    if (error) { alert("Couldn't save the subscription: " + error.message); return; }
+    if (error) { alert("Couldn't save the subscription: " + niceErr(error)); return; }
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (state.familyId && tz) await supabase.from("families").update({ tz }).eq("id", state.familyId);
     localStorage.setItem("fh_notif", "1");
@@ -597,7 +657,7 @@ function viewLogin() {
       email: document.getElementById("email").value.trim(),
       password: document.getElementById("password").value,
     });
-    if (error) { err.textContent = error.message; btn.disabled = false; btn.textContent = "Sign in"; return; }
+    if (error) { err.textContent = niceErr(error); btn.disabled = false; btn.textContent = "Sign in"; return; }
     clearMember();
     // reset cached context for the (re)authenticated session
     state.familyId = null; state.members = null;
@@ -631,7 +691,7 @@ async function viewPicker() {
     .order("sort_order", { ascending: true });
 
   const tiles = document.getElementById("tiles");
-  if (error) { tiles.innerHTML = `<p class="err">${esc(error.message)}</p>`; return; }
+  if (error) { tiles.innerHTML = `<p class="err">${esc(niceErr(error))}</p>`; return; }
   if (!data || data.length === 0) { tiles.innerHTML = `<p class="sub">No members found.</p>`; return; }
 
   tiles.innerHTML = "";
@@ -755,7 +815,7 @@ async function viewFamily() {
     if (v && !/^[0-9]{4}$/.test(v)) { msg.textContent = "Needs to be 4 digits."; return; }
     if (await familyHasPin() && !(await requirePin("modify"))) return;   // changing a PIN needs the old one
     const { error } = await supabase.rpc("set_family_pin", { p_pin: v || null });
-    msg.textContent = error ? error.message : (v ? "PIN saved." : "PIN removed.");
+    msg.textContent = error ? niceErr(error) : (v ? "PIN saved." : "PIN removed.");
     state._hasPin = undefined; state._pinUntil = 0;
     document.getElementById("s_pin").value = "";
   };
@@ -825,7 +885,7 @@ function openMemberForm(member) {
     let res;
     if (isEdit) res = await updateMember(member.id, payload);
     else res = await createMember({ ...payload, sort_order: state.members.length });
-    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     // if the edited member is the one we're acting as, refresh the cached identity
     const cm = getMember();
     if (cm && isEdit && cm.id === member.id) setMember({ ...cm, name: payload.name, color: payload.color, is_child: payload.is_child, avatar_url: payload.avatar_url });
@@ -983,7 +1043,7 @@ async function fetchNoteCounts(eventIds) {
   return counts;
 }
 
-const createEvent = (p) => supabase.from("events").insert({ family_id: state.familyId, rrule: null, exdates: [], ...p }).select().single();
+const createEvent = (p) => insertOnce("events", { family_id: state.familyId, rrule: null, exdates: [], ...p });
 const updateEvent = (id, p) => supabase.from("events").update(p).eq("id", id).select().single();
 const deleteEvent = (id) => supabase.from("events").delete().eq("id", id);
 
@@ -1001,11 +1061,12 @@ const capSeries = (base, capDate) => supabase.from("events").update({ rrule: wit
 async function splitSeries(base, occ, form) {                 // "this + future"
   const r1 = await capSeries(base, new Date(occ.getTime() - 1000)); // UNTIL just before this occurrence
   if (r1.error) return r1;
-  return supabase.from("events").insert({
+  return insertOnce("events", {
     family_id: state.familyId, member_id: form.member_id, title: form.title, location: form.location,
     starts_at: form.starts_at, ends_at: form.ends_at, all_day: form.all_day, rrule: form.rrule, exdates: [],
     reminder_minutes: form.reminder_minutes ?? null,
-  }).select().single();
+    countdown: !!form.countdown, countdown_emoji: form.countdown ? (form.countdown_emoji || null) : null,
+  });
 }
 const fetchNotes = (eventId) => supabase.from("event_notes").select("id,body,author_member_id,created_at").eq("event_id", eventId).order("created_at", { ascending: true });
 const addNote = (eventId, body) => supabase.from("event_notes").insert({ family_id: state.familyId, event_id: eventId, author_member_id: state.member.id, body });
@@ -2187,23 +2248,27 @@ function openEventForm(inst, presetDayKey) {
 
     let res;
     if (!isEdit) {
-      res = await createEvent({ title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
+      res = await createEvent({ title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes,
+                               countdown: f.countdown, countdown_emoji: f.countdown_emoji });
     } else if (!isRecurring) {
-      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
+      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes,
+                                        countdown: f.countdown, countdown_emoji: f.countdown_emoji });
     } else if (scope === "this") {
       res = await overrideOccurrence(base, inst.occKey, { starts_at: f.starts_at, ends_at: f.ends_at, title: f.title, location: f.location });
     } else if (scope === "future") {
-      res = await splitSeries(base, new Date(inst.occISO), { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
+      res = await splitSeries(base, new Date(inst.occISO), { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes,
+                                                            countdown: f.countdown, countdown_emoji: f.countdown_emoji });
     } else { // all
-      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes });
+      res = await updateEvent(base.id, { title: f.title, member_id: f.member_id, location: f.location, starts_at: f.starts_at, ends_at: f.ends_at, all_day: f.all_day, rrule: rule, reminder_minutes,
+                                        countdown: f.countdown, countdown_emoji: f.countdown_emoji });
     }
-    if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res && res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close();
     renderCalendar();
   });
 
   if (isEdit) {
-    const done = (r) => { if (r && r.error) { $("evErr").textContent = r.error.message; return; } close(); renderCalendar(); };
+    const done = (r) => { if (r && r.error) { $("evErr").textContent = niceErr(r.error); return; } close(); renderCalendar(); };
     if (isRecurring) {
       $("evDelete").onclick = () => { $("delChoice").style.display = "flex"; };
       $("delThis").onclick = async () => done(await addExdate(base, inst.occISO));
@@ -2221,7 +2286,7 @@ function openEventForm(inst, presetDayKey) {
       noteBtn.disabled = true;
       const { error } = await addNote(base.id, body);
       noteBtn.disabled = false;
-      if (error) { $("evErr").textContent = error.message; return; }
+      if (error) { $("evErr").textContent = niceErr(error); return; }
       noteInput.value = "";
       loadNotes(base.id);
     };
@@ -2234,7 +2299,7 @@ async function loadNotes(eventId) {
   const list = document.getElementById("noteList");
   if (!list) return;
   const { data, error } = await fetchNotes(eventId);
-  if (error) { list.innerHTML = `<p class="err">${esc(error.message)}</p>`; return; }
+  if (error) { list.innerHTML = `<p class="err">${esc(niceErr(error))}</p>`; return; }
   if (!data.length) { list.innerHTML = `<p class="sub">No notes yet.</p>`; return; }
   list.innerHTML = data.map((n) => {
     const a = state.membersById[n.author_member_id];
@@ -2341,7 +2406,7 @@ function openTaskItemForm(task, occKey, presetDayKey) {
     };
     const save = document.getElementById("tiSave"); save.disabled = true; save.textContent = "Saving…";
     const res = isEdit ? await updateTask(task.id, payload) : await createTask(payload);
-    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close(); renderCalendar();
   });
   if (isEdit) {
@@ -2352,7 +2417,7 @@ function openTaskItemForm(task, occKey, presetDayKey) {
     document.getElementById("tiDelete").onclick = async () => {
       if (!confirm("Delete this task?")) return;
       const { error } = await deleteTask(task.id);
-      if (error) { document.getElementById("tiErr").textContent = error.message; return; }
+      if (error) { document.getElementById("tiErr").textContent = niceErr(error); return; }
       close(); renderCalendar();
     };
   }
@@ -2375,7 +2440,7 @@ async function fetchDoneMap(taskIds) {
   for (const r of data) set.add(`${r.task_id}|${r.occurrence_date ?? ""}`);
   return set;
 }
-const createTask = (p) => supabase.from("tasks").insert({ family_id: state.familyId, rrule: null, exdates: [], is_active: true, ...p }).select().single();
+const createTask = (p) => insertOnce("tasks", { family_id: state.familyId, rrule: null, exdates: [], is_active: true, ...p });
 const updateTask = (id, p) => supabase.from("tasks").update(p).eq("id", id).select().single();
 const deleteTask = (id) => supabase.from("tasks").delete().eq("id", id);
 // completion records only — no star award (complete_task RPC is wired in M5).
@@ -2665,7 +2730,7 @@ async function renderChoreMember() {
   if (pq) pq.onclick = () => openRedemptionQueue(pendingAll, rewardsById, async (id, status) => {
     if (!(await requirePin("modify"))) return;
     const { error } = await supabase.rpc("set_redemption_status", { p_redemption: id, p_status: status });
-    if (error) return toast(error.message);
+    if (error) return toast(niceErr(error));
     renderChores();
   });
 
@@ -2692,7 +2757,7 @@ async function renderChoreMember() {
         toast(/insufficient_stars/.test(error.message) ? "Not enough stars yet."
           : /reward_free/.test(error.message) ? "That reward costs 0 stars — give it a price first."
           : /too_many_pending/.test(error.message) ? "Already waiting for a grown-up on that one."
-          : error.message);
+          : niceErr(error));
         return;
       }
       celebrate(); renderChores();
@@ -3063,7 +3128,7 @@ async function renderChoreWall() {
         toast(/insufficient_stars/.test(error.message) ? "Not enough stars yet."
           : /reward_free/.test(error.message) ? "That reward costs 0 stars — give it a price first."
           : /too_many_pending/.test(error.message) ? "Already waiting for a grown-up on that one."
-          : error.message);
+          : niceErr(error));
         return;
       }
       celebrate(); renderChores();
@@ -3072,7 +3137,7 @@ async function renderChoreWall() {
   const setRed = async (id, status) => {
     if (!(await requirePin("modify"))) return;
     const { error } = await supabase.rpc("set_redemption_status", { p_redemption: id, p_status: status });
-    if (error) return alert(error.message);
+    if (error) return alert(niceErr(error));
     renderChores();
   };
   const rn = document.getElementById("rwNew");
@@ -3167,7 +3232,7 @@ function openListForm(order) {
     const name = document.getElementById("nl_name").value.trim();
     if (!name) return;
     const { error } = await createList({ name, color: chosen, sort_order: order });
-    if (error) { document.getElementById("nlErr").textContent = error.message; return; }
+    if (error) { document.getElementById("nlErr").textContent = niceErr(error); return; }
     close(); renderLists();
   });
 }
@@ -3223,7 +3288,7 @@ async function renderLists() {
       const t = inp.value.trim(); if (!t) return;
       inp.value = ""; inp.focus();                       // stay put: people add several at once
       const { error } = await createListItem({ list_id: f.dataset.add, text: t, sort_order: Date.now() % 100000 });
-      if (error) return toast(error.message);
+      if (error) return toast(niceErr(error));
       renderLists();
     });
   });
@@ -3695,7 +3760,7 @@ async function renderKidMode() {
     if (error) return toast(/insufficient_stars/.test(error.message) ? "Not enough stars yet."
       : /reward_free/.test(error.message) ? "That reward costs 0 stars — ask a grown-up."
       : /too_many_pending/.test(error.message) ? "Already waiting for a grown-up on that one."
-      : error.message);
+      : niceErr(error));
     celebrate(); renderKidMode();
   };
   const rd = document.getElementById("kidRedeem");
@@ -3883,7 +3948,7 @@ function openTaskForm(task, presetAssignee) {
     const time_band = document.getElementById("t_band").value || null;
     const payload = { title, description, assigned_to, due_date, star_reward, rrule, icon_url, time_band };
     const res = isEdit ? await updateTask(task.id, payload) : await createTask(payload);
-    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close();
     renderChores();
   });
@@ -3893,7 +3958,7 @@ function openTaskForm(task, presetAssignee) {
       if (!(await requirePin("modify"))) return;
       if (!confirm("Delete this task?")) return;
       const { error } = await deleteTask(task.id);
-      if (error) { document.getElementById("tErr").textContent = error.message; return; }
+      if (error) { document.getElementById("tErr").textContent = niceErr(error); return; }
       close();
       renderChores();
     };
@@ -3907,7 +3972,7 @@ const fetchLeaderboard = () => supabase.from("family_members")
 const fetchRewards = () => supabase.from("rewards")
   .select("id,title,emoji,star_cost,is_active,icon_url").eq("is_active", true)
   .order("star_cost", { ascending: true });
-const createReward = (p) => supabase.from("rewards").insert({ family_id: state.familyId, is_active: true, ...p }).select().single();
+const createReward = (p) => insertOnce("rewards", { family_id: state.familyId, is_active: true, ...p });
 const updateReward = (id, p) => supabase.from("rewards").update(p).eq("id", id).select().single();
 const deactivateReward = (id) => supabase.from("rewards").update({ is_active: false }).eq("id", id);
 const fetchPendingRedemptions = () => supabase.from("redemptions")
@@ -4087,7 +4152,7 @@ async function renderRewards() {
       const { error } = await supabase.rpc("redeem_reward", { p_member: member.id, p_reward: r.id });
       if (error) {
         b.disabled = false;
-        alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : error.message);
+        alert(/insufficient_stars/.test(error.message) ? "Not enough stars yet." : niceErr(error));
         return;
       }
       renderRewards();
@@ -4139,13 +4204,13 @@ function openRewardForm(reward) {
     const save = document.getElementById("rwSave"); save.disabled = true; save.textContent = "Saving…";
     const payload = { title, emoji, star_cost, icon_url };
     const res = isEdit ? await updateReward(reward.id, payload) : await createReward(payload);
-    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close(); render();
   });
   if (isEdit) document.getElementById("rwDelete").onclick = async () => {
     if (!confirm("Remove this reward from the catalog?")) return;
     const { error } = await deactivateReward(reward.id);
-    if (error) { document.getElementById("rwErr").textContent = error.message; return; }
+    if (error) { document.getElementById("rwErr").textContent = niceErr(error); return; }
     close(); render();
   };
 }
@@ -4154,7 +4219,7 @@ function openRewardForm(reward) {
 const fetchExpenses = () => supabase.from("recurring_expenses")
   .select("id,name,amount,currency,category,rrule,next_due,paid_by,is_active")
   .eq("is_active", true).order("next_due", { ascending: true, nullsFirst: false });
-const createExpense = (p) => supabase.from("recurring_expenses").insert({ family_id: state.familyId, is_active: true, ...p }).select().single();
+const createExpense = (p) => insertOnce("recurring_expenses", { family_id: state.familyId, is_active: true, ...p });
 const updateExpense = (id, p) => supabase.from("recurring_expenses").update(p).eq("id", id).select().single();
 const deactivateExpense = (id) => supabase.from("recurring_expenses").update({ is_active: false }).eq("id", id);
 
@@ -4384,14 +4449,14 @@ function openExpenseForm(exp) {
     const save = document.getElementById("xSave"); save.disabled = true; save.textContent = "Saving…";
     const payload = { name, amount, currency, category, paid_by, next_due, rrule };
     const res = isEdit ? await updateExpense(exp.id, payload) : await createExpense(payload);
-    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close();
     renderFinance();
   });
   if (isEdit) document.getElementById("xDelete").onclick = async () => {
     if (!confirm("Remove this expense?")) return;
     const { error } = await deactivateExpense(exp.id);
-    if (error) { document.getElementById("xErr").textContent = error.message; return; }
+    if (error) { document.getElementById("xErr").textContent = niceErr(error); return; }
     close();
     renderFinance();
   };
@@ -4412,7 +4477,7 @@ const delStore = (id) => supabase.from("stores").delete().eq("id", id); // FK se
 const createShopping = (p) => supabase.from("shopping_items").insert({ family_id: state.familyId, ...p }).select().single();
 const updateShopping = (id, p) => supabase.from("shopping_items").update(p).eq("id", id);
 const delShopping = (id) => supabase.from("shopping_items").delete().eq("id", id);
-const createMeal = (p) => supabase.from("meals").insert({ family_id: state.familyId, ...p }).select().single();
+const createMeal = (p) => insertOnce("meals", { family_id: state.familyId, ...p });
 const updateMeal = (id, p) => supabase.from("meals").update(p).eq("id", id);
 const delMeal = (id) => supabase.from("meals").delete().eq("id", id);
 
@@ -4507,13 +4572,13 @@ function moveToBuy(item) {
       const nm = (document.getElementById("mv_newstore").value || "").trim();
       if (!nm) { err.textContent = "Enter the new store name."; save.disabled = false; save.textContent = "Save"; return; }
       const sr = await createStore(nm, (state._stores || []).length);
-      if (sr.error) { err.textContent = sr.error.message; save.disabled = false; save.textContent = "Save"; return; }
+      if (sr.error) { err.textContent = niceErr(sr.error); save.disabled = false; save.textContent = "Save"; return; }
       store_id = sr.data.id;
     }
     const need_by = document.getElementById("mv_by").value || null;
     const critical = document.getElementById("mv_crit").checked;
     const res = await createShopping({ name: item.name, store_id, got: false, critical, need_by, source_pantry_id: item.id });
-    if (res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     if (stock === "out") await delPantry(item.id);
     else await updatePantry(item.id, { status: "low", default_store_id: store_id });
     close(); state.mealView = "buy"; renderMeals();
@@ -4613,11 +4678,11 @@ function editBuyItem(item, stores) {
       const nm = (document.getElementById("eb_newstore").value || "").trim();
       if (!nm) { err.textContent = "Enter the new shop name."; save.disabled = false; save.textContent = "Save"; return; }
       const sr = await createStore(nm, (state._stores || []).length);
-      if (sr.error) { err.textContent = sr.error.message; save.disabled = false; save.textContent = "Save"; return; }
+      if (sr.error) { err.textContent = niceErr(sr.error); save.disabled = false; save.textContent = "Save"; return; }
       store_id = sr.data.id;
     }
     const res = await updateShopping(item.id, { name, store_id, critical: document.getElementById("eb_crit").checked, need_by: document.getElementById("eb_by").value || null });
-    if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res && res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close(); renderMeals();
   });
 }
@@ -4648,18 +4713,18 @@ function manageShopsForm() {
   overlay.querySelectorAll(".sh_save").forEach((b) => b.onclick = async () => {
     const inp = overlay.querySelector(`.sh_name[data-id="${b.dataset.id}"]`);
     const nm = (inp.value || "").trim(); if (!nm) { err.textContent = "Shop name can't be empty."; return; }
-    const r = await updateStore(b.dataset.id, { name: nm }); if (r.error) { err.textContent = r.error.message; return; }
+    const r = await updateStore(b.dataset.id, { name: nm }); if (r.error) { err.textContent = niceErr(r.error); return; }
     state._stores = null; close(); renderMeals();
   });
   overlay.querySelectorAll(".sh_del").forEach((b) => b.onclick = async () => {
     if (!confirm("Delete this shop? Its items stay on the list under “No shop”.")) return;
-    const r = await delStore(b.dataset.id); if (r.error) { err.textContent = r.error.message; return; }
+    const r = await delStore(b.dataset.id); if (r.error) { err.textContent = niceErr(r.error); return; }
     if (state.buyStore === b.dataset.id) { state.buyStore = "all"; localStorage.setItem("fh_buystore", "all"); }
     close(); renderMeals();
   });
   document.getElementById("sh_add").onclick = async () => {
     const nm = (document.getElementById("sh_new").value || "").trim(); if (!nm) { err.textContent = "Enter a shop name."; return; }
-    const r = await createStore(nm, stores.length); if (r.error) { err.textContent = r.error.message; return; }
+    const r = await createStore(nm, stores.length); if (r.error) { err.textContent = niceErr(r.error); return; }
     close(); renderMeals();
   };
 }
@@ -4723,7 +4788,7 @@ function mealPlanForm(meal, presetDay, onDone) {
     const save = document.getElementById("mpSave"); save.disabled = true; save.textContent = "Saving…";
     const payload = { title: name, meal_type: document.getElementById("mp_type").value, day: dayVal };
     const res = isEdit ? await updateMeal(meal.id, payload) : await createMeal(payload);
-    if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res && res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close(); refresh();
   });
 }
@@ -4764,12 +4829,12 @@ function mealForm(kind) {
         const nm = (document.getElementById("mf_newstore").value || "").trim();
         if (!nm) { err.textContent = "Enter the new store name."; save.disabled = false; save.textContent = "Save"; return; }
         const sr = await createStore(nm, (state._stores || []).length);
-        if (sr.error) { err.textContent = sr.error.message; save.disabled = false; save.textContent = "Save"; return; }
+        if (sr.error) { err.textContent = niceErr(sr.error); save.disabled = false; save.textContent = "Save"; return; }
         store_id = sr.data.id;
       } else if (!store_id) store_id = state.buyStore !== "all" ? state.buyStore : null;
       res = await createShopping({ name, store_id, got: false, critical: document.getElementById("mf_crit").checked, need_by: document.getElementById("mf_by").value || null });
     } else res = await createMeal({ title: name, meal_type: document.getElementById("mf_type").value, day: document.getElementById("mf_day").value });
-    if (res && res.error) { err.textContent = res.error.message; save.disabled = false; save.textContent = "Save"; return; }
+    if (res && res.error) { err.textContent = niceErr(res.error); save.disabled = false; save.textContent = "Save"; return; }
     close(); renderMeals();
   });
 }

@@ -3,7 +3,7 @@
 // - LIB_CACHE:   cross-origin ES modules (esm.sh) cached on first load.
 // - DATA_CACHE:  Supabase REST GETs (network-first, cache fallback) = offline reads.
 // Writes (POST/PATCH/RPC) and the realtime socket are never cached.
-const VERSION = "v40";
+const VERSION = "v41";
 const SHELL_CACHE = "family-hub-shell-" + VERSION;
 const LIB_CACHE = "family-hub-libs-" + VERSION;
 const DATA_CACHE = "family-hub-data-" + VERSION;
@@ -66,7 +66,14 @@ self.addEventListener("fetch", (e) => {
           caches.open(DATA_CACHE).then((c) => c.put(request, copy)).catch(() => {});
           return res;
         })
-        .catch(() => caches.match(request))
+        // A cache miss here used to resolve to `undefined`, and respondWith(undefined)
+        // is reported to the page as a bare "TypeError: Load failed" — the same
+        // unreadable string that lost an event form. Answer with a real response the
+        // client can turn into a sentence.
+        .catch(() => caches.match(request).then((hit) => hit || new Response(
+          JSON.stringify({ message: "offline: no cached copy of this data yet" }),
+          { status: 503, headers: { "Content-Type": "application/json" } }
+        )))
     );
     return;
   }
